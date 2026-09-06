@@ -6,7 +6,10 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current edition
 
-This edition includes the Spring Boot claims-service foundation, its framework-independent claim domain model, HTTP endpoints for submitting and browsing synthetic claims, and durable PostgreSQL persistence managed by Flyway.
+This edition includes two Spring Boot services. The claims service owns claim intake,
+lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
+calls a synthetic policy service to confirm that the policy is active, covers the
+incident date, and covers the requested claim type.
 
 ## Claim lifecycle
 
@@ -29,9 +32,13 @@ stateDiagram-v2
 ```text
 services/
   claims-service/    Spring Boot REST API and claims orchestration
+  policy-service/    Synthetic policy lookup and validation API
 ```
 
-Additional services, the Python worker, and the React portal will be added only when their milestones begin.
+The policy service is deliberately separate: this makes the network boundary,
+failure handling, and service contract visible instead of hiding policy rules inside
+the claims application. Additional services, the Python worker, and the React portal
+will be added only when their milestones begin.
 
 ## Prerequisites
 
@@ -42,7 +49,7 @@ Additional services, the Python worker, and the React portal will be added only 
 
 Maven does not need to be installed globally. The claims service includes Maven Wrapper, which downloads and uses the project's configured Maven version.
 
-## Build and test the claims service
+## Build and test the services
 
 Docker Desktop must be running because the persistence integration test starts a
 disposable PostgreSQL container with Testcontainers.
@@ -50,9 +57,17 @@ disposable PostgreSQL container with Testcontainers.
 ```bash
 cd services/claims-service
 ./mvnw test
+
+cd ../policy-service
+../claims-service/mvnw -f pom.xml test
 ```
 
-## Run and manually verify the claims service
+The policy service reuses the repository's Maven Wrapper executable while keeping
+its own independent `pom.xml`. The tests cover domain rules, both HTTP APIs,
+PostgreSQL persistence, the policy HTTP contract, correlation-ID propagation,
+retry behavior, malformed upstream responses, and the circuit breaker.
+
+## Run and manually verify both services
 
 Create your ignored local environment file and choose a local-only database
 password:
@@ -67,8 +82,18 @@ Edit `.env`, replace `replace-with-a-local-password`, and then start PostgreSQL:
 docker compose up --detach --wait postgres
 ```
 
-Docker Compose reads `.env` automatically. Export the same variables for the Java
-process, then start the application:
+Start the policy service in a first terminal:
+
+```bash
+cd services/policy-service
+../claims-service/mvnw -f pom.xml spring-boot:run
+```
+
+Its health endpoint is `http://localhost:8082/actuator/health`, and its Swagger UI
+is `http://localhost:8082/swagger-ui.html`.
+
+Docker Compose reads `.env` automatically. In a second terminal, export the same
+variables for the Java process and start the claims service:
 
 ```bash
 set -a
@@ -100,6 +125,22 @@ The named volume keeps the data for the next run. Running
 `docker compose down --volumes` also deletes the local database and should only be
 used when you intentionally want a clean reset.
 
+## Synthetic policy catalog
+
+The policy service keeps a small deterministic catalog in memory so local runs and
+tests always produce the same result:
+
+| Policy number | Active | Covered claim types | Coverage dates |
+| --- | --- | --- | --- |
+| `POL-AUTO-1001` | Yes | `AUTO` | 2025-01-01 through 2027-12-31 |
+| `POL-HOME-2001` | Yes | `PROPERTY` | 2025-01-01 through 2027-12-31 |
+| `POL-MULTI-3001` | Yes | `AUTO`, `PROPERTY` | 2025-01-01 through 2027-12-31 |
+| `POL-INACTIVE-9001` | No | `AUTO` | 2025-01-01 through 2027-12-31 |
+
+These records are synthetic learning data, not real customer policies. A production
+system would replace the in-memory catalog with the insurer's policy system while
+preserving the same application-facing contract.
+
 ## Submit a synthetic claim
 
 With the claims service running, submit a claim from a second terminal:
@@ -111,7 +152,7 @@ curl --include \
   --header 'X-Correlation-ID: local-demo-1001' \
   --data '{
     "externalReference": "EXT-DEMO-1001",
-    "policyNumber": "POL-2001",
+    "policyNumber": "POL-AUTO-1001",
     "claimantName": "Synthetic Claimant",
     "claimType": "AUTO",
     "incidentDate": "2026-01-10",
@@ -124,6 +165,28 @@ curl --include \
 The response is `201 Created`, includes a `Location` header, and returns the new
 claim with status `SUBMITTED`. Reusing the external reference, even with different
 letter casing, returns `409 Conflict` as an RFC 9457 Problem Details response.
+
+Using an unknown or inactive policy, an incident date outside its coverage window,
+or a claim type it does not cover returns `422 Unprocessable Content`. The response
+contains a stable rejection code such as `POLICY_NOT_FOUND` or
+`CLAIM_TYPE_NOT_COVERED`. No claim or status-history row is stored when validation
+fails.
+
+The incoming `X-Correlation-ID` is forwarded to the policy service, allowing one
+request to be followed across both applications. If the caller does not provide an
+ID, the claims service generates one. Both services return the ID in their response.
+
+For temporary network or policy-server failures, the claims service makes at most
+three attempts with a short delay. It does not retry business rejections. Repeated
+technical failures open a circuit breaker, which temporarily stops calls to an
+unhealthy dependency. A dependency outage produces a sanitized `503 Service
+Unavailable`; a structurally invalid policy response produces a sanitized `502 Bad
+Gateway`. In both cases, nothing is persisted.
+
+The default policy URL is `http://localhost:8082`. Override it for another
+environment with `POLICY_SERVICE_BASE_URL`. Connect and read timeouts, retry limits,
+and circuit-breaker thresholds live under `integration.policy` in the claims
+service's `application.yml`.
 
 Claims are stored in PostgreSQL and remain available after the claims-service or
 database container restarts. Flyway applies versioned schema migrations at startup,
@@ -181,5 +244,5 @@ and `newStatus` is `SUBMITTED`. Each valid transition updates the claim and inse
 its history row in one database transaction. Optimistic locking prevents concurrent
 reviewers from silently overwriting one another.
 
-OpenAPI JSON is available at `http://localhost:8080/v3/api-docs`, and interactive
-Swagger UI is available at `http://localhost:8080/swagger-ui.html`.
+Claims OpenAPI JSON is available at `http://localhost:8080/v3/api-docs`, and its
+interactive Swagger UI is available at `http://localhost:8080/swagger-ui.html`.

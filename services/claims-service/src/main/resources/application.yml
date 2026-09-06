@@ -36,3 +36,17 @@ info:
   application:
     name: Claims Service
     description: Insurance claims intake and orchestration service
+
+integration:
+  policy:
+    base-url: ${POLICY_SERVICE_BASE_URL:http://localhost:8082}
+    connect-timeout: 1s
+    read-timeout: 2s
+    retry:
+      max-attempts: 3
+      wait-duration: 200ms
+    circuit-breaker:
+      failure-rate-threshold: 50
+      sliding-window-size: 10
+      minimum-number-of-calls: 5
+      wait-duration-in-open-state: 10s

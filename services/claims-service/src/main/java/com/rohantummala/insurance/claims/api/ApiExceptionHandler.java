@@ -3,6 +3,9 @@ package com.rohantummala.insurance.claims.api;
 import com.rohantummala.insurance.claims.application.exception.ClaimNotFoundException;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.exception.InvalidClaimQueryException;
+import com.rohantummala.insurance.claims.application.exception.InvalidPolicyServiceResponseException;
+import com.rohantummala.insurance.claims.application.exception.PolicyServiceUnavailableException;
+import com.rohantummala.insurance.claims.application.exception.PolicyValidationRejectedException;
 import com.rohantummala.insurance.claims.domain.exception.InvalidClaimStatusTransitionException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -106,6 +109,42 @@ public class ApiExceptionHandler {
         "Claim was updated concurrently",
         "Reload the claim and retry the status transition",
         "urn:problem:concurrent-claim-update",
+        request);
+  }
+
+  @ExceptionHandler(PolicyValidationRejectedException.class)
+  ProblemDetail handlePolicyRejection(
+      PolicyValidationRejectedException exception, HttpServletRequest request) {
+    ProblemDetail problem =
+        baseProblem(
+            HttpStatus.UNPROCESSABLE_CONTENT,
+            "Policy validation rejected the claim",
+            exception.getMessage(),
+            "urn:problem:policy-validation-rejected",
+            request);
+    problem.setProperty("code", exception.getCode());
+    return problem;
+  }
+
+  @ExceptionHandler(PolicyServiceUnavailableException.class)
+  ProblemDetail handlePolicyServiceUnavailable(
+      PolicyServiceUnavailableException exception, HttpServletRequest request) {
+    return baseProblem(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Policy validation unavailable",
+        "The policy could not be validated at this time",
+        "urn:problem:policy-service-unavailable",
+        request);
+  }
+
+  @ExceptionHandler(InvalidPolicyServiceResponseException.class)
+  ProblemDetail handleInvalidPolicyResponse(
+      InvalidPolicyServiceResponseException exception, HttpServletRequest request) {
+    return baseProblem(
+        HttpStatus.BAD_GATEWAY,
+        "Invalid policy service response",
+        "The policy service returned an invalid response",
+        "urn:problem:invalid-policy-service-response",
         request);
   }
 
