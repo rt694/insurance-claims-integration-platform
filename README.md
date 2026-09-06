@@ -4,9 +4,9 @@ A production-style learning project for submitting and processing synthetic insu
 
 > This project uses synthetic data only. The AI component will summarize claim information and flag missing details for a human reviewer. It must never approve, deny, price, or determine coverage for a claim.
 
-## Current milestone
+## Current edition
 
-Milestone 2 establishes the Spring Boot claims-service foundation. The service starts, exposes operational health information, and contains the framework-independent claim domain model. HTTP claim endpoints and persistence will be added in focused follow-up stories.
+This edition establishes the Spring Boot claims-service foundation. The service starts, exposes operational health information, and contains the framework-independent claim domain model. HTTP claim endpoints and persistence will be added in focused follow-up stories.
 
 ## Claim lifecycle
 
