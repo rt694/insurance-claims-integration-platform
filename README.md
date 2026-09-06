@@ -6,7 +6,23 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current milestone
 
-Milestone 2 establishes the Spring Boot claims-service foundation. The service currently starts and exposes operational health information. Claim endpoints and persistence will be added in focused follow-up stories.
+Milestone 2 establishes the Spring Boot claims-service foundation. The service starts, exposes operational health information, and contains the framework-independent claim domain model. HTTP claim endpoints and persistence will be added in focused follow-up stories.
+
+## Claim lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> SUBMITTED
+    SUBMITTED --> UNDER_REVIEW
+    SUBMITTED --> CANCELLED
+    UNDER_REVIEW --> APPROVED
+    UNDER_REVIEW --> DENIED
+    UNDER_REVIEW --> CANCELLED
+    APPROVED --> CLOSED
+    DENIED --> CLOSED
+```
+
+`CANCELLED` and `CLOSED` are terminal states. The domain model rejects every transition not shown above. Domain validation keeps these rules consistent regardless of whether a claim operation originates from REST, messaging, or a future administrative process.
 
 ## Repository layout
 
