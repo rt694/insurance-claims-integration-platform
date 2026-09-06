@@ -23,6 +23,10 @@
 # Editors
 .idea/
 .vscode/
+
+### Local environment and database data ###
+.env
+*.local.env
 *.iml
 
 # Logs

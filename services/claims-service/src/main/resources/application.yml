@@ -1,6 +1,20 @@
 spring:
   application:
     name: claims-service
+  datasource:
+    url: ${CLAIMS_DB_URL:jdbc:postgresql://localhost:5432/claims}
+    username: ${CLAIMS_DB_USERNAME:claims_app}
+    password: ${CLAIMS_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
