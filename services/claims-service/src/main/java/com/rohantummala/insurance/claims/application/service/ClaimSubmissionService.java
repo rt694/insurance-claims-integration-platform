@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ClaimSubmissionService {
@@ -20,6 +21,7 @@ public class ClaimSubmissionService {
     this.clock = clock;
   }
 
+  @Transactional
   public Claim submit(SubmitClaimCommand command) {
     Instant submittedAt = clock.instant();
     Claim claim =

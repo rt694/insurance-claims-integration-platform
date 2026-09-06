@@ -6,7 +6,7 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current edition
 
-This edition includes the Spring Boot claims-service foundation, its framework-independent claim domain model, and HTTP endpoints for submitting and browsing synthetic claims. The current in-memory storage adapter will be replaced with PostgreSQL in a focused persistence milestone.
+This edition includes the Spring Boot claims-service foundation, its framework-independent claim domain model, HTTP endpoints for submitting and browsing synthetic claims, and durable PostgreSQL persistence managed by Flyway.
 
 ## Claim lifecycle
 
@@ -44,6 +44,9 @@ Maven does not need to be installed globally. The claims service includes Maven 
 
 ## Build and test the claims service
 
+Docker Desktop must be running because the persistence integration test starts a
+disposable PostgreSQL container with Testcontainers.
+
 ```bash
 cd services/claims-service
 ./mvnw test
@@ -51,9 +54,26 @@ cd services/claims-service
 
 ## Run and manually verify the claims service
 
-Start the application:
+Create your ignored local environment file and choose a local-only database
+password:
 
 ```bash
+cp .env.example .env
+```
+
+Edit `.env`, replace `replace-with-a-local-password`, and then start PostgreSQL:
+
+```bash
+docker compose up --detach --wait postgres
+```
+
+Docker Compose reads `.env` automatically. Export the same variables for the Java
+process, then start the application:
+
+```bash
+set -a
+source .env
+set +a
 cd services/claims-service
 ./mvnw spring-boot:run
 ```
@@ -74,6 +94,11 @@ The readiness probe can be checked independently at
 `http://localhost:8080/actuator/health/readiness`. A platform such as Docker or
 Kubernetes can use this signal to decide whether the service is ready to receive
 traffic.
+
+When finished, stop PostgreSQL from the repository root with `docker compose down`.
+The named volume keeps the data for the next run. Running
+`docker compose down --volumes` also deletes the local database and should only be
+used when you intentionally want a clean reset.
 
 ## Submit a synthetic claim
 
@@ -100,10 +125,10 @@ The response is `201 Created`, includes a `Location` header, and returns the new
 claim with status `SUBMITTED`. Reusing the external reference, even with different
 letter casing, returns `409 Conflict` as an RFC 9457 Problem Details response.
 
-The current repository adapter stores claims in memory. This makes the API usable
-before the persistence milestone, but data is intentionally lost whenever the
-service restarts. PostgreSQL and database-enforced uniqueness will replace this
-adapter in Milestone 3.
+Claims are stored in PostgreSQL and remain available after the claims-service or
+database container restarts. Flyway applies versioned schema migrations at startup,
+while Hibernate validates that the JPA mapping still agrees with the migrated
+schema. PostgreSQL also enforces case-insensitive external-reference uniqueness.
 
 ## Retrieve and browse claims
 
