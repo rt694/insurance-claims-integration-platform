@@ -3,9 +3,12 @@ package com.rohantummala.insurance.claims.infrastructure.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
 import com.rohantummala.insurance.claims.application.query.ClaimPage;
 import com.rohantummala.insurance.claims.application.query.ClaimQuery;
+import com.rohantummala.insurance.claims.application.service.ClaimStatusService;
+import com.rohantummala.insurance.claims.application.service.ClaimSubmissionService;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatus;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
@@ -35,6 +38,10 @@ class JpaClaimRepositoryAdapterTest {
   @Autowired private ClaimRepository claimRepository;
 
   @Autowired private JdbcClient jdbcClient;
+
+  @Autowired private ClaimSubmissionService claimSubmissionService;
+
+  @Autowired private ClaimStatusService claimStatusService;
 
   @Test
   void persistsAndQueriesTheCompleteDomainModel() {
@@ -96,7 +103,36 @@ class JpaClaimRepositoryAdapterTest {
             .query(Integer.class)
             .single();
 
-    assertThat(migrationCount).isEqualTo(1);
+    assertThat(migrationCount).isEqualTo(2);
+  }
+
+  @Test
+  void submissionAndStatusTransitionProduceAnAtomicAuditTrail() {
+    Claim submitted =
+        claimSubmissionService.submit(
+            new SubmitClaimCommand(
+                "EXT-DB-HISTORY",
+                "POL-2001",
+                "Synthetic Claimant",
+                ClaimType.DISABILITY,
+                LocalDate.of(2026, 1, 10),
+                "Synthetic history integration test",
+                new BigDecimal("1250.00")));
+
+    Claim updated = claimStatusService.transition(submitted.id(), ClaimStatus.UNDER_REVIEW);
+
+    assertThat(updated.status()).isEqualTo(ClaimStatus.UNDER_REVIEW);
+    assertThat(claimRepository.findById(submitted.id())).contains(updated);
+    assertThat(claimStatusService.getHistory(submitted.id()))
+        .extracting(change -> change.previousStatus() + "->" + change.newStatus())
+        .containsExactly("null->SUBMITTED", "SUBMITTED->UNDER_REVIEW");
+    Long version =
+        jdbcClient
+            .sql("SELECT version FROM claims WHERE id = :id")
+            .param("id", submitted.id())
+            .query(Long.class)
+            .single();
+    assertThat(version).isEqualTo(1);
   }
 
   private Claim claim(String reference, ClaimType claimType, String createdAt) {

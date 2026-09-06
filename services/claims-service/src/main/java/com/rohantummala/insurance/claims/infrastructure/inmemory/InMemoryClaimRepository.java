@@ -1,5 +1,6 @@
 package com.rohantummala.insurance.claims.infrastructure.inmemory;
 
+import com.rohantummala.insurance.claims.application.exception.ClaimNotFoundException;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
 import com.rohantummala.insurance.claims.application.query.ClaimPage;
 import com.rohantummala.insurance.claims.application.query.ClaimQuery;
@@ -31,6 +32,17 @@ public class InMemoryClaimRepository implements ClaimRepository {
     return claimsByExternalReference.values().stream()
         .filter(claim -> claim.id().equals(id))
         .findFirst();
+  }
+
+  @Override
+  public synchronized Claim update(Claim claim) {
+    String normalizedReference = claim.externalReference().toUpperCase(Locale.ROOT);
+    Claim current = claimsByExternalReference.get(normalizedReference);
+    if (current == null || !current.id().equals(claim.id())) {
+      throw new ClaimNotFoundException(claim.id());
+    }
+    claimsByExternalReference.put(normalizedReference, claim);
+    return claim;
   }
 
   @Override

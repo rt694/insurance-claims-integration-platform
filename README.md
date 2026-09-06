@@ -152,5 +152,34 @@ The default page is `0`, the default size is `20`, and the maximum size is `100`
 Results are ordered newest first. The response includes `totalElements` and
 `totalPages` so clients can build pagination controls without loading every claim.
 
+## Transition claim status and view history
+
+Request a lifecycle transition with the claim ID returned by submission:
+
+```bash
+curl --silent \
+  --request PATCH \
+  --header 'Content-Type: application/json' \
+  --header 'X-Correlation-ID: local-status-1001' \
+  --data '{"status":"UNDER_REVIEW"}' \
+  http://localhost:8080/api/v1/claims/{id}/status
+```
+
+The domain lifecycle shown above determines whether the transition is allowed. For
+example, `SUBMITTED` can become `UNDER_REVIEW` or `CANCELLED`, but it cannot become
+`APPROVED` directly. An invalid transition returns `409 Conflict` and does not
+change the claim or append history.
+
+Retrieve the oldest-to-newest audit trail:
+
+```bash
+curl --silent http://localhost:8080/api/v1/claims/{id}/history
+```
+
+Every claim starts with an initial history record whose `previousStatus` is `null`
+and `newStatus` is `SUBMITTED`. Each valid transition updates the claim and inserts
+its history row in one database transaction. Optimistic locking prevents concurrent
+reviewers from silently overwriting one another.
+
 OpenAPI JSON is available at `http://localhost:8080/v3/api-docs`, and interactive
 Swagger UI is available at `http://localhost:8080/swagger-ui.html`.

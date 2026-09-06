@@ -3,7 +3,9 @@ package com.rohantummala.insurance.claims.application.service;
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
+import com.rohantummala.insurance.claims.application.port.ClaimStatusHistoryRepository;
 import com.rohantummala.insurance.claims.domain.model.Claim;
+import com.rohantummala.insurance.claims.domain.model.ClaimStatusChange;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
@@ -14,10 +16,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class ClaimSubmissionService {
 
   private final ClaimRepository claimRepository;
+  private final ClaimStatusHistoryRepository historyRepository;
   private final Clock clock;
 
-  public ClaimSubmissionService(ClaimRepository claimRepository, Clock clock) {
+  public ClaimSubmissionService(
+      ClaimRepository claimRepository,
+      ClaimStatusHistoryRepository historyRepository,
+      Clock clock) {
     this.claimRepository = claimRepository;
+    this.historyRepository = historyRepository;
     this.clock = clock;
   }
 
@@ -40,6 +47,7 @@ public class ClaimSubmissionService {
       throw new DuplicateClaimExternalReferenceException(command.externalReference());
     }
 
+    historyRepository.append(ClaimStatusChange.initial(UUID.randomUUID(), claim));
     return claim;
   }
 }
