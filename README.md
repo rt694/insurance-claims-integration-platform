@@ -6,7 +6,7 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current edition
 
-This edition establishes the Spring Boot claims-service foundation. The service starts, exposes operational health information, and contains the framework-independent claim domain model. HTTP claim endpoints and persistence will be added in focused follow-up stories.
+This edition includes the Spring Boot claims-service foundation, its framework-independent claim domain model, and HTTP endpoints for submitting and browsing synthetic claims. The current in-memory storage adapter will be replaced with PostgreSQL in a focused persistence milestone.
 
 ## Claim lifecycle
 
@@ -104,6 +104,28 @@ The current repository adapter stores claims in memory. This makes the API usabl
 before the persistence milestone, but data is intentionally lost whenever the
 service restarts. PostgreSQL and database-enforced uniqueness will replace this
 adapter in Milestone 3.
+
+## Retrieve and browse claims
+
+Use the `id` returned by claim submission to retrieve that claim:
+
+```bash
+curl --silent \
+  --header 'X-Correlation-ID: local-demo-get-1001' \
+  http://localhost:8080/api/v1/claims/{id}
+```
+
+An unknown claim ID returns `404 Not Found` as a Problem Details response. Browse
+claims with zero-based pagination and optional `status` and `claimType` filters:
+
+```bash
+curl --silent \
+  'http://localhost:8080/api/v1/claims?page=0&size=20&status=SUBMITTED&claimType=AUTO'
+```
+
+The default page is `0`, the default size is `20`, and the maximum size is `100`.
+Results are ordered newest first. The response includes `totalElements` and
+`totalPages` so clients can build pagination controls without loading every claim.
 
 OpenAPI JSON is available at `http://localhost:8080/v3/api-docs`, and interactive
 Swagger UI is available at `http://localhost:8080/swagger-ui.html`.

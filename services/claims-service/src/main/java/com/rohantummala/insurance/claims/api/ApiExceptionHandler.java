@@ -1,6 +1,8 @@
 package com.rohantummala.insurance.claims.api;
 
+import com.rohantummala.insurance.claims.application.exception.ClaimNotFoundException;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
+import com.rohantummala.insurance.claims.application.exception.InvalidClaimQueryException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.LinkedHashMap;
@@ -12,6 +14,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -55,6 +58,30 @@ public class ApiExceptionHandler {
         "Malformed JSON request",
         "The request body could not be parsed",
         "urn:problem:malformed-json",
+        request);
+  }
+
+  @ExceptionHandler(ClaimNotFoundException.class)
+  ProblemDetail handleNotFound(ClaimNotFoundException exception, HttpServletRequest request) {
+    return baseProblem(
+        HttpStatus.NOT_FOUND,
+        "Claim not found",
+        exception.getMessage(),
+        "urn:problem:claim-not-found",
+        request);
+  }
+
+  @ExceptionHandler({InvalidClaimQueryException.class, MethodArgumentTypeMismatchException.class})
+  ProblemDetail handleInvalidQuery(Exception exception, HttpServletRequest request) {
+    String detail =
+        exception instanceof InvalidClaimQueryException
+            ? exception.getMessage()
+            : "One or more path or query parameters could not be parsed";
+    return baseProblem(
+        HttpStatus.BAD_REQUEST,
+        "Invalid request parameter",
+        detail,
+        "urn:problem:invalid-request-parameter",
         request);
   }
 
