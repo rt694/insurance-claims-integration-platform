@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: claims-service
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+info:
+  application:
+    name: Claims Service
+    description: Insurance claims intake and orchestration service

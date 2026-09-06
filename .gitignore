@@ -1,0 +1,29 @@
+.DS_Store
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Java
+**/target/
+
+# JavaScript
+**/node_modules/
+**/dist/
+
+# Python
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.coverage
+
+# Editors
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
