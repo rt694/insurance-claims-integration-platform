@@ -74,3 +74,36 @@ The readiness probe can be checked independently at
 `http://localhost:8080/actuator/health/readiness`. A platform such as Docker or
 Kubernetes can use this signal to decide whether the service is ready to receive
 traffic.
+
+## Submit a synthetic claim
+
+With the claims service running, submit a claim from a second terminal:
+
+```bash
+curl --include \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header 'X-Correlation-ID: local-demo-1001' \
+  --data '{
+    "externalReference": "EXT-DEMO-1001",
+    "policyNumber": "POL-2001",
+    "claimantName": "Synthetic Claimant",
+    "claimType": "AUTO",
+    "incidentDate": "2026-01-10",
+    "description": "Synthetic vehicle damage for local testing",
+    "estimatedLoss": 1250.00
+  }' \
+  http://localhost:8080/api/v1/claims
+```
+
+The response is `201 Created`, includes a `Location` header, and returns the new
+claim with status `SUBMITTED`. Reusing the external reference, even with different
+letter casing, returns `409 Conflict` as an RFC 9457 Problem Details response.
+
+The current repository adapter stores claims in memory. This makes the API usable
+before the persistence milestone, but data is intentionally lost whenever the
+service restarts. PostgreSQL and database-enforced uniqueness will replace this
+adapter in Milestone 3.
+
+OpenAPI JSON is available at `http://localhost:8080/v3/api-docs`, and interactive
+Swagger UI is available at `http://localhost:8080/swagger-ui.html`.
