@@ -9,6 +9,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -52,6 +53,10 @@ class JpaClaimEntity {
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt;
 
+  @Version
+  @Column(nullable = false)
+  private long version;
+
   protected JpaClaimEntity() {}
 
   private JpaClaimEntity(Claim claim) {
@@ -85,5 +90,10 @@ class JpaClaimEntity {
         status,
         createdAt,
         updatedAt);
+  }
+
+  void applyStatus(Claim claim) {
+    this.status = claim.status();
+    this.updatedAt = claim.updatedAt();
   }
 }

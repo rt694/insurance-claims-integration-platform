@@ -2,6 +2,7 @@ package com.rohantummala.insurance.claims.api;
 
 import com.rohantummala.insurance.claims.application.query.ClaimQuery;
 import com.rohantummala.insurance.claims.application.service.ClaimQueryService;
+import com.rohantummala.insurance.claims.application.service.ClaimStatusService;
 import com.rohantummala.insurance.claims.application.service.ClaimSubmissionService;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatus;
@@ -11,9 +12,11 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,11 +30,15 @@ public class ClaimController {
 
   private final ClaimSubmissionService claimSubmissionService;
   private final ClaimQueryService claimQueryService;
+  private final ClaimStatusService claimStatusService;
 
   public ClaimController(
-      ClaimSubmissionService claimSubmissionService, ClaimQueryService claimQueryService) {
+      ClaimSubmissionService claimSubmissionService,
+      ClaimQueryService claimQueryService,
+      ClaimStatusService claimStatusService) {
     this.claimSubmissionService = claimSubmissionService;
     this.claimQueryService = claimQueryService;
+    this.claimStatusService = claimStatusService;
   }
 
   @PostMapping
@@ -71,5 +78,30 @@ public class ClaimController {
       @RequestParam(required = false) ClaimType claimType) {
     return ClaimPageResponse.from(
         claimQueryService.findAll(new ClaimQuery(page, size, status, claimType)));
+  }
+
+  @PatchMapping("/{id}/status")
+  @Operation(summary = "Transition a claim to an allowed status")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Claim status transitioned"),
+    @ApiResponse(responseCode = "400", description = "Request validation failed"),
+    @ApiResponse(responseCode = "404", description = "Claim not found"),
+    @ApiResponse(responseCode = "409", description = "Status transition conflicts")
+  })
+  ClaimResponse updateStatus(
+      @PathVariable UUID id, @Valid @RequestBody UpdateClaimStatusRequest request) {
+    return ClaimResponse.from(claimStatusService.transition(id, request.status()));
+  }
+
+  @GetMapping("/{id}/history")
+  @Operation(summary = "Get a claim's chronological status history")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Status history returned"),
+    @ApiResponse(responseCode = "404", description = "Claim not found")
+  })
+  List<ClaimStatusHistoryResponse> getStatusHistory(@PathVariable UUID id) {
+    return claimStatusService.getHistory(id).stream()
+        .map(ClaimStatusHistoryResponse::from)
+        .toList();
   }
 }

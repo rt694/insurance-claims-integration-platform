@@ -1,5 +1,6 @@
 package com.rohantummala.insurance.claims.infrastructure.persistence;
 
+import com.rohantummala.insurance.claims.application.exception.ClaimNotFoundException;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
 import com.rohantummala.insurance.claims.application.query.ClaimPage;
 import com.rohantummala.insurance.claims.application.query.ClaimQuery;
@@ -43,6 +44,15 @@ public class JpaClaimRepositoryAdapter implements ClaimRepository {
   @Override
   public Optional<Claim> findById(UUID id) {
     return repository.findById(id).map(JpaClaimEntity::toDomain);
+  }
+
+  @Override
+  public Claim update(Claim claim) {
+    JpaClaimEntity entity =
+        repository.findById(claim.id()).orElseThrow(() -> new ClaimNotFoundException(claim.id()));
+    entity.applyStatus(claim);
+    repository.flush();
+    return entity.toDomain();
   }
 
   @Override

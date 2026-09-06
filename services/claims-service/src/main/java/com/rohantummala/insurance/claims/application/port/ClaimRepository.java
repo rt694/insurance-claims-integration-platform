@@ -12,5 +12,7 @@ public interface ClaimRepository {
 
   Optional<Claim> findById(UUID id);
 
+  Claim update(Claim claim);
+
   ClaimPage findAll(ClaimQuery query);
 }

@@ -3,6 +3,7 @@ package com.rohantummala.insurance.claims.api;
 import com.rohantummala.insurance.claims.application.exception.ClaimNotFoundException;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.exception.InvalidClaimQueryException;
+import com.rohantummala.insurance.claims.domain.exception.InvalidClaimStatusTransitionException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.LinkedHashMap;
@@ -11,6 +12,7 @@ import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -82,6 +84,28 @@ public class ApiExceptionHandler {
         "Invalid request parameter",
         detail,
         "urn:problem:invalid-request-parameter",
+        request);
+  }
+
+  @ExceptionHandler(InvalidClaimStatusTransitionException.class)
+  ProblemDetail handleInvalidStatusTransition(
+      InvalidClaimStatusTransitionException exception, HttpServletRequest request) {
+    return baseProblem(
+        HttpStatus.CONFLICT,
+        "Invalid claim status transition",
+        exception.getMessage(),
+        "urn:problem:invalid-claim-status-transition",
+        request);
+  }
+
+  @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+  ProblemDetail handleConcurrentUpdate(
+      ObjectOptimisticLockingFailureException exception, HttpServletRequest request) {
+    return baseProblem(
+        HttpStatus.CONFLICT,
+        "Claim was updated concurrently",
+        "Reload the claim and retry the status transition",
+        "urn:problem:concurrent-claim-update",
         request);
   }
 

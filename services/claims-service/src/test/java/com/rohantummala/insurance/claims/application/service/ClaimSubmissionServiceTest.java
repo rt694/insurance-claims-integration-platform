@@ -3,14 +3,17 @@ package com.rohantummala.insurance.claims.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
+import com.rohantummala.insurance.claims.application.port.ClaimStatusHistoryRepository;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatus;
+import com.rohantummala.insurance.claims.domain.model.ClaimStatusChange;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -31,11 +34,15 @@ class ClaimSubmissionServiceTest {
 
   @Mock private ClaimRepository claimRepository;
 
+  @Mock private ClaimStatusHistoryRepository historyRepository;
+
   private ClaimSubmissionService service;
 
   @BeforeEach
   void setUp() {
-    service = new ClaimSubmissionService(claimRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+    service =
+        new ClaimSubmissionService(
+            claimRepository, historyRepository, Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   @Test
@@ -51,6 +58,14 @@ class ClaimSubmissionServiceTest {
     assertThat(result.status()).isEqualTo(ClaimStatus.SUBMITTED);
     assertThat(result.createdAt()).isEqualTo(NOW);
     assertThat(result.updatedAt()).isEqualTo(NOW);
+
+    ArgumentCaptor<ClaimStatusChange> historyCaptor =
+        ArgumentCaptor.forClass(ClaimStatusChange.class);
+    verify(historyRepository).append(historyCaptor.capture());
+    assertThat(historyCaptor.getValue().claimId()).isEqualTo(result.id());
+    assertThat(historyCaptor.getValue().previousStatus()).isNull();
+    assertThat(historyCaptor.getValue().newStatus()).isEqualTo(ClaimStatus.SUBMITTED);
+    assertThat(historyCaptor.getValue().changedAt()).isEqualTo(NOW);
   }
 
   @Test
@@ -60,6 +75,7 @@ class ClaimSubmissionServiceTest {
     assertThatThrownBy(() -> service.submit(command("EXT-1001")))
         .isInstanceOf(DuplicateClaimExternalReferenceException.class)
         .hasMessage("A claim with external reference EXT-1001 already exists");
+    verify(historyRepository, never()).append(any());
   }
 
   private SubmitClaimCommand command(String externalReference) {
