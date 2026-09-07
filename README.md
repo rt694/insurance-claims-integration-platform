@@ -20,9 +20,10 @@ consumption now includes delayed bounded retries, durable dead-letter storage,
 transactional duplicate detection, and a disabled-by-default replay operation.
 The FastAPI worker defines strict request/result contracts, a fixed reviewer-assistance
 safety policy, a reliable RabbitMQ consumer, a deterministic mock summary provider,
-and confirmed `claim.summary.completed.v1` publication. It uses manual acknowledgements,
-bounded delayed retries, dead-letter routing, stable event IDs for redelivery, and
-broker-aware readiness. An optional real provider is the next worker story.
+an optional schema-validated OpenAI provider, and confirmed
+`claim.summary.completed.v1` publication. It uses manual acknowledgements, bounded
+delayed retries, dead-letter routing, stable event IDs for redelivery, and broker-aware
+readiness. The mock remains the default, so local development never requires an API key.
 
 ## Claim lifecycle
 
@@ -132,8 +133,11 @@ five-second delayed retry.
 
 The mock provider intentionally demonstrates the interface and safety contract rather
 than pretending to make a real AI inference. It never repeats instruction-like claim
-text and cannot emit claim decisions. See the worker README for the environment setup
-that enables the complete local consume → summarize → publish flow.
+text and cannot emit claim decisions. The optional OpenAI adapter uses the Responses
+API with strict Pydantic output parsing, sends the fixed safety prompt separately from
+the untrusted claim JSON, disables response storage, and maps unusable upstream output
+to the worker's existing retry path. See the worker README for both provider setup
+options and the complete local consume → summarize → publish flow.
 
 ## Run and manually verify both services
 
