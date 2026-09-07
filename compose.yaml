@@ -16,5 +16,23 @@ services:
       retries: 10
     restart: unless-stopped
 
+  rabbitmq:
+    image: rabbitmq:4.3.5-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-claims_app}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in a local .env file}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - claims-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   claims-postgres-data:
+  claims-rabbitmq-data:

@@ -7,14 +7,17 @@ import static org.mockito.Mockito.when;
 
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
 import com.rohantummala.insurance.claims.application.event.EventEnvelope;
+import com.rohantummala.insurance.claims.application.event.OutboxEventPublication;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.policy.PolicyValidationResult;
+import com.rohantummala.insurance.claims.application.port.OutboxPublicationRepository;
 import com.rohantummala.insurance.claims.application.port.OutboxRepository;
 import com.rohantummala.insurance.claims.application.port.PolicyValidationPort;
 import com.rohantummala.insurance.claims.application.service.ClaimSubmissionService;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,7 +35,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@SpringBootTest(properties = "CLAIMS_DB_PASSWORD=test-only-placeholder")
+@SpringBootTest(
+    properties = {
+      "CLAIMS_DB_PASSWORD=test-only-placeholder",
+      "integration.outbox.publisher-enabled=false"
+    })
 @Testcontainers
 @Import(TransactionalOutboxIntegrationTest.OutboxFailureTestConfiguration.class)
 class TransactionalOutboxIntegrationTest {
@@ -45,6 +52,8 @@ class TransactionalOutboxIntegrationTest {
   @Autowired private JdbcClient jdbcClient;
 
   @Autowired private ControllableOutboxRepository outboxRepository;
+
+  @Autowired private OutboxPublicationRepository outboxPublicationRepository;
 
   @MockitoBean private PolicyValidationPort policyValidationPort;
 
@@ -115,6 +124,47 @@ class TransactionalOutboxIntegrationTest {
     assertThat(rowCount("claims")).isEqualTo(1);
     assertThat(rowCount("claim_status_history")).isEqualTo(1);
     assertThat(rowCount("outbox_events")).isEqualTo(1);
+  }
+
+  @Test
+  void anExpiredPublicationLeaseCanBeReclaimedWithoutAStaleAttemptChangingItsState() {
+    claimSubmissionService.submit(command("EXT-OUTBOX-LEASE"));
+    Instant firstClaimTime = Instant.now().plusSeconds(1);
+    Instant leaseUntil = firstClaimTime.plusSeconds(15);
+
+    OutboxEventPublication firstAttempt =
+        outboxPublicationRepository.claimReadyBatch(1, firstClaimTime, leaseUntil).get(0);
+
+    assertThat(
+            outboxPublicationRepository.claimReadyBatch(
+                1, firstClaimTime.plusSeconds(1), leaseUntil.plusSeconds(15)))
+        .isEmpty();
+
+    OutboxEventPublication recoveredAttempt =
+        outboxPublicationRepository
+            .claimReadyBatch(1, leaseUntil.plusSeconds(1), leaseUntil.plusSeconds(16))
+            .get(0);
+
+    assertThat(recoveredAttempt.eventId()).isEqualTo(firstAttempt.eventId());
+    assertThat(recoveredAttempt.attemptNumber()).isEqualTo(2);
+    assertThatThrownBy(
+            () ->
+                outboxPublicationRepository.markPublished(
+                    firstAttempt.eventId(),
+                    firstAttempt.attemptNumber(),
+                    leaseUntil.plusSeconds(2)))
+        .hasMessageContaining("attempt 1")
+        .hasMessageContaining("as published");
+
+    outboxPublicationRepository.markPublished(
+        recoveredAttempt.eventId(), recoveredAttempt.attemptNumber(), leaseUntil.plusSeconds(2));
+    assertThat(
+            jdbcClient
+                .sql("SELECT status FROM outbox_events WHERE event_id = :eventId")
+                .param("eventId", recoveredAttempt.eventId())
+                .query(String.class)
+                .single())
+        .isEqualTo("PUBLISHED");
   }
 
   private int rowCount(String table) {

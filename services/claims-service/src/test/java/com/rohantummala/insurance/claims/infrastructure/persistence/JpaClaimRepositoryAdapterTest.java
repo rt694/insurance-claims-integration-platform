@@ -33,7 +33,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@SpringBootTest(properties = "CLAIMS_DB_PASSWORD=test-only-placeholder")
+@SpringBootTest(
+    properties = {
+      "CLAIMS_DB_PASSWORD=test-only-placeholder",
+      "integration.outbox.publisher-enabled=false"
+    })
 @Testcontainers
 @Transactional
 class JpaClaimRepositoryAdapterTest {
@@ -117,7 +121,7 @@ class JpaClaimRepositoryAdapterTest {
             .query(Integer.class)
             .single();
 
-    assertThat(migrationCount).isEqualTo(3);
+    assertThat(migrationCount).isEqualTo(4);
   }
 
   @Test
