@@ -13,6 +13,7 @@ import com.rohantummala.insurance.claims.application.exception.ClaimSummaryNotFo
 import com.rohantummala.insurance.claims.application.exception.InvalidClaimSummaryEventException;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
 import com.rohantummala.insurance.claims.application.port.ClaimSummaryRepository;
+import com.rohantummala.insurance.claims.application.port.InboxEventRepository;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimSummary;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
@@ -33,8 +34,13 @@ class ClaimSummaryServiceTest {
 
   private final ClaimRepository claimRepository = mock(ClaimRepository.class);
   private final ClaimSummaryRepository summaryRepository = mock(ClaimSummaryRepository.class);
+  private final InboxEventRepository inboxEventRepository = mock(InboxEventRepository.class);
   private final ClaimSummaryService service =
-      new ClaimSummaryService(claimRepository, summaryRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+      new ClaimSummaryService(
+          claimRepository,
+          summaryRepository,
+          inboxEventRepository,
+          Clock.fixed(NOW, ZoneOffset.UTC));
 
   @Test
   void recordsReviewerAssistanceWithoutChangingTheClaim() {
@@ -42,16 +48,45 @@ class ClaimSummaryServiceTest {
     Claim claim = claim(claimId);
     ClaimSummaryCompletedEnvelope event = event(claimId, claimId);
     when(claimRepository.findById(claimId)).thenReturn(Optional.of(claim));
+    when(inboxEventRepository.registerIfFirst(
+            event.eventId(),
+            ClaimSummaryService.CONSUMER_NAME,
+            event.eventType(),
+            event.aggregateId(),
+            NOW))
+        .thenReturn(true);
 
-    ClaimSummary result = service.record(event);
+    SummaryProcessingResult result = service.record(event);
+    ClaimSummary summary = result.summary();
 
-    assertThat(result.claimId()).isEqualTo(claimId);
-    assertThat(result.sourceEventId()).isEqualTo(event.eventId());
-    assertThat(result.summary()).isEqualTo("Vehicle damage requires human review.");
-    assertThat(result.recommendedHumanReviewQueue()).isEqualTo(HumanReviewQueue.STANDARD_REVIEW);
-    assertThat(result.receivedAt()).isEqualTo(NOW);
-    verify(summaryRepository).save(result);
+    assertThat(result.status()).isEqualTo(SummaryProcessingResult.Status.STORED);
+    assertThat(summary.claimId()).isEqualTo(claimId);
+    assertThat(summary.sourceEventId()).isEqualTo(event.eventId());
+    assertThat(summary.summary()).isEqualTo("Vehicle damage requires human review.");
+    assertThat(summary.recommendedHumanReviewQueue()).isEqualTo(HumanReviewQueue.STANDARD_REVIEW);
+    assertThat(summary.receivedAt()).isEqualTo(NOW);
+    verify(summaryRepository).save(summary);
     verify(claimRepository, never()).update(claim);
+  }
+
+  @Test
+  void acknowledgesADuplicateEventWithoutApplyingItsSummaryAgain() {
+    UUID claimId = UUID.randomUUID();
+    ClaimSummaryCompletedEnvelope event = event(claimId, claimId);
+    when(claimRepository.findById(claimId)).thenReturn(Optional.of(claim(claimId)));
+    when(inboxEventRepository.registerIfFirst(
+            event.eventId(),
+            ClaimSummaryService.CONSUMER_NAME,
+            event.eventType(),
+            event.aggregateId(),
+            NOW))
+        .thenReturn(false);
+
+    SummaryProcessingResult result = service.record(event);
+
+    assertThat(result.status()).isEqualTo(SummaryProcessingResult.Status.DUPLICATE);
+    assertThat(result.summary()).isNull();
+    verify(summaryRepository, never()).save(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
