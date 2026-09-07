@@ -34,6 +34,16 @@ const claimSummary = {
   generatedAt: '2026-01-11T12:01:00Z',
 }
 
+const initialClaimHistory = [
+  {
+    id: '3edc75cf-5ce1-471a-937a-468b6711a597',
+    claimId: claimPage.content[0].id,
+    previousStatus: null,
+    newStatus: 'SUBMITTED',
+    changedAt: '2026-01-11T12:00:00Z',
+  },
+]
+
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
     ok,
@@ -252,6 +262,7 @@ describe('Claims portal', () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = String(input)
       if (url.endsWith('/summary')) return Promise.resolve(jsonResponse(claimSummary))
+      if (url.endsWith('/history')) return Promise.resolve(jsonResponse(initialClaimHistory))
       if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
         return Promise.resolve(jsonResponse(claimPage.content[0]))
       }
@@ -300,6 +311,7 @@ describe('Claims portal', () => {
             : jsonResponse(claimSummary),
         )
       }
+      if (url.endsWith('/history')) return Promise.resolve(jsonResponse(initialClaimHistory))
       if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
         return Promise.resolve(jsonResponse(claimPage.content[0]))
       }
@@ -317,4 +329,115 @@ describe('Claims portal', () => {
     expect(await screen.findByText('Vehicle damage requires human review.')).toBeInTheDocument()
     expect(summaryRequests).toBe(2)
   })
+
+  it('allows a valid human status transition and refreshes claim history', async () => {
+    const user = userEvent.setup()
+    const updatedClaim = {
+      ...claimPage.content[0],
+      status: 'UNDER_REVIEW',
+      updatedAt: '2026-01-11T13:00:00Z',
+    }
+    const updatedHistory = [
+      ...initialClaimHistory,
+      {
+        id: 'b8f2c5b1-a22b-4b92-8221-2f8264147110',
+        claimId: claimPage.content[0].id,
+        previousStatus: 'SUBMITTED',
+        newStatus: 'UNDER_REVIEW',
+        changedAt: '2026-01-11T13:00:00Z',
+      },
+    ]
+    let historyRequests = 0
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/summary')) return Promise.resolve(jsonResponse(claimSummary))
+      if (url.endsWith('/history')) {
+        historyRequests += 1
+        return Promise.resolve(
+          jsonResponse(historyRequests === 1 ? initialClaimHistory : updatedHistory),
+        )
+      }
+      if (url.endsWith('/status') && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse(updatedClaim))
+      }
+      if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
+        return Promise.resolve(jsonResponse(claimPage.content[0]))
+      }
+      return Promise.resolve(jsonResponse(claimPage))
+    })
+    render(<App />)
+    await screen.findByText('EXT-PORTAL-1001')
+
+    const reviewButton = screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' })
+    await user.click(reviewButton)
+    const detailPanel = await screen.findByRole('region', { name: 'Claim details' })
+    expect(await within(detailPanel).findByText('Claim submitted')).toBeInTheDocument()
+    expect(within(detailPanel).queryByRole('option', { name: 'Approved' })).not.toBeInTheDocument()
+
+    await user.selectOptions(within(detailPanel).getByLabelText('Next status'), 'UNDER_REVIEW')
+    await user.click(within(detailPanel).getByRole('button', { name: 'Update status' }))
+
+    expect(await within(detailPanel).findByRole('status')).toHaveTextContent(
+      'Status updated to Under Review.',
+    )
+    expect(await within(detailPanel).findByText('Submitted → Under Review')).toBeInTheDocument()
+    expect(historyRequests).toBe(2)
+    expect(within(reviewButton.closest('tr') as HTMLTableRowElement).getByText('Under Review'))
+      .toBeInTheDocument()
+
+    const patchRequest = vi.mocked(fetch).mock.calls.find(
+      ([url, init]) => String(url).endsWith('/status') && init?.method === 'PATCH',
+    )
+    expect(patchRequest).toBeDefined()
+    expect(JSON.parse(patchRequest?.[1]?.body as string)).toEqual({ status: 'UNDER_REVIEW' })
+    expect(patchRequest?.[1]?.headers).toEqual(
+      expect.objectContaining({
+        'Content-Type': 'application/json',
+        'X-Correlation-ID': expect.any(String),
+      }),
+    )
+  })
+
+  it('shows a rejected status transition without changing the claim', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/summary')) return Promise.resolve(jsonResponse(claimSummary))
+      if (url.endsWith('/history')) return Promise.resolve(jsonResponse(initialClaimHistory))
+      if (url.endsWith('/status') && init?.method === 'PATCH') {
+        return Promise.resolve(
+          jsonResponse(
+            {
+              type: 'urn:problem:invalid-claim-status-transition',
+              status: 409,
+              detail: 'The status changed before this update was submitted.',
+              correlationId: 'portal-status-conflict',
+            },
+            false,
+            409,
+          ),
+        )
+      }
+      if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
+        return Promise.resolve(jsonResponse(claimPage.content[0]))
+      }
+      return Promise.resolve(jsonResponse(claimPage))
+    })
+    render(<App />)
+    await screen.findByText('EXT-PORTAL-1001')
+
+    await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))
+    const detailPanel = await screen.findByRole('region', { name: 'Claim details' })
+    await user.selectOptions(within(detailPanel).getByLabelText('Next status'), 'CANCELLED')
+    await user.click(within(detailPanel).getByRole('button', { name: 'Update status' }))
+
+    const alert = await within(detailPanel).findByRole('alert')
+    expect(alert).toHaveTextContent('The status changed before this update was submitted.')
+    expect(alert).toHaveTextContent('portal-status-conflict')
+    expect(historyRequestsFor(fetch, '/history')).toBe(1)
+  })
 })
+
+function historyRequestsFor(fetchMock: typeof fetch, pathEnding: string) {
+  return vi.mocked(fetchMock).mock.calls.filter(([url]) => String(url).endsWith(pathEnding)).length
+}

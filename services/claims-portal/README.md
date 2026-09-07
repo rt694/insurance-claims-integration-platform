@@ -6,6 +6,8 @@ pagination, loading and empty states, and RFC Problem Details errors. It also su
 new synthetic claims through the same service and refreshes the inventory after a
 successful response. Reviewers can open an authoritative claim detail view and see
 generated reviewer-assistance summaries when asynchronous processing completes.
+The detail workspace also lets a human reviewer choose an allowed lifecycle transition
+and inspect the claim's chronological status history.
 
 ## Local development
 
@@ -31,6 +33,11 @@ A summary-specific `404` means asynchronous processing is still underway, so the
 shows a pending state with a summary-only refresh action. Other detail and summary
 failures remain retryable without discarding the claims inventory.
 
+Status controls show only transitions allowed from the claim's current state. A
+successful `PATCH /api/v1/claims/{id}/status` updates both the detail panel and inventory
+row, then reloads the append-only history. The backend still validates every transition;
+conflicts are presented without changing the browser's current claim state.
+
 ## Verification
 
 ```bash
@@ -42,7 +49,8 @@ pnpm build
 Component tests use Vitest, Testing Library, and JSDOM. They cover listing, filtering,
 pagination, client-side submission validation, successful creation, backend field
 errors, reviewer detail loading, and pending-summary refresh. Tests replace `fetch` with
-a test double, so they are fast and do not require the Java services or PostgreSQL.
+a test double. They also cover successful and rejected lifecycle transitions plus
+history refresh, so tests remain fast without requiring the Java services or PostgreSQL.
 
 The production build writes static assets to `dist/`. Container and deployment
 integration will be added in Milestone 14.

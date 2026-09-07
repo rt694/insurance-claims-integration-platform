@@ -155,6 +155,18 @@ function App() {
             key={selectedClaimId}
             claimId={selectedClaimId}
             onClose={() => setSelectedClaimId(null)}
+            onClaimUpdated={(updatedClaim) =>
+              setClaimPage((current) =>
+                current
+                  ? {
+                      ...current,
+                      content: current.content.map((claim) =>
+                        claim.id === updatedClaim.id ? updatedClaim : claim,
+                      ),
+                    }
+                  : current,
+              )
+            }
           />
         )}
 

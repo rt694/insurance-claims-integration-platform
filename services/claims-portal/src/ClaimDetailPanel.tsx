@@ -1,15 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
   ApiProblem,
   getClaim,
+  getClaimHistory,
   getClaimSummary,
+  updateClaimStatus,
   type Claim,
+  type ClaimStatus,
+  type ClaimStatusChange,
   type ClaimSummary,
 } from './api/claims'
 
 interface ClaimDetailPanelProps {
   claimId: string
   onClose: () => void
+  onClaimUpdated: (claim: Claim) => void
+}
+
+const allowedTransitions: Record<ClaimStatus, ClaimStatus[]> = {
+  SUBMITTED: ['UNDER_REVIEW', 'CANCELLED'],
+  UNDER_REVIEW: ['APPROVED', 'DENIED', 'CANCELLED'],
+  APPROVED: ['CLOSED'],
+  DENIED: ['CLOSED'],
+  CANCELLED: [],
+  CLOSED: [],
 }
 
 const dateFormatter = new Intl.DateTimeFormat('en-US', {
@@ -45,7 +59,7 @@ function isPendingSummary(problem: ApiProblem | null) {
   return problem?.status === 404 && problem.type === 'urn:problem:claim-summary-not-found'
 }
 
-export function ClaimDetailPanel({ claimId, onClose }: ClaimDetailPanelProps) {
+export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDetailPanelProps) {
   const [claim, setClaim] = useState<Claim | null>(null)
   const [claimProblem, setClaimProblem] = useState<ApiProblem | null>(null)
   const [isClaimLoading, setIsClaimLoading] = useState(true)
@@ -54,6 +68,14 @@ export function ClaimDetailPanel({ claimId, onClose }: ClaimDetailPanelProps) {
   const [summaryProblem, setSummaryProblem] = useState<ApiProblem | null>(null)
   const [isSummaryLoading, setIsSummaryLoading] = useState(true)
   const [summaryReloadKey, setSummaryReloadKey] = useState(0)
+  const [history, setHistory] = useState<ClaimStatusChange[] | null>(null)
+  const [historyProblem, setHistoryProblem] = useState<ApiProblem | null>(null)
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true)
+  const [historyReloadKey, setHistoryReloadKey] = useState(0)
+  const [nextStatus, setNextStatus] = useState<ClaimStatus | ''>('')
+  const [transitionProblem, setTransitionProblem] = useState<ApiProblem | null>(null)
+  const [transitionMessage, setTransitionMessage] = useState('')
+  const [isTransitioning, setIsTransitioning] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -89,6 +111,23 @@ export function ClaimDetailPanel({ claimId, onClose }: ClaimDetailPanelProps) {
     return () => controller.abort()
   }, [claimId, summaryReloadKey])
 
+  useEffect(() => {
+    const controller = new AbortController()
+
+    getClaimHistory(claimId, controller.signal)
+      .then(setHistory)
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) {
+          setHistoryProblem(apiProblem(reason, 'The claim history could not be loaded.'))
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsHistoryLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [claimId, historyReloadKey])
+
   function reloadClaim() {
     setClaim(null)
     setClaimProblem(null)
@@ -101,6 +140,34 @@ export function ClaimDetailPanel({ claimId, onClose }: ClaimDetailPanelProps) {
     setSummaryProblem(null)
     setIsSummaryLoading(true)
     setSummaryReloadKey((key) => key + 1)
+  }
+
+  function reloadHistory() {
+    setHistory(null)
+    setHistoryProblem(null)
+    setIsHistoryLoading(true)
+    setHistoryReloadKey((key) => key + 1)
+  }
+
+  async function transitionStatus(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!claim || !nextStatus) return
+
+    setIsTransitioning(true)
+    setTransitionProblem(null)
+    setTransitionMessage('')
+    try {
+      const updatedClaim = await updateClaimStatus(claim.id, nextStatus)
+      setClaim(updatedClaim)
+      setNextStatus('')
+      setTransitionMessage(`Status updated to ${displayLabel(updatedClaim.status)}.`)
+      onClaimUpdated(updatedClaim)
+      reloadHistory()
+    } catch (reason) {
+      setTransitionProblem(apiProblem(reason, 'The claim status could not be updated.'))
+    } finally {
+      setIsTransitioning(false)
+    }
   }
 
   return (
@@ -156,6 +223,69 @@ export function ClaimDetailPanel({ claimId, onClose }: ClaimDetailPanelProps) {
                 <h4>Incident description</h4>
                 <p>{claim.description}</p>
               </div>
+              <div className="status-workflow">
+                <div>
+                  <h4>Update claim status</h4>
+                  <p>Status changes are permanent and recorded in the claim history.</p>
+                </div>
+                {allowedTransitions[claim.status].length > 0 ? (
+                  <form onSubmit={transitionStatus}>
+                    <label htmlFor="nextStatus">Next status</label>
+                    <div>
+                      <select
+                        id="nextStatus"
+                        value={nextStatus}
+                        disabled={isTransitioning}
+                        onChange={(event) => {
+                          setNextStatus(event.target.value as ClaimStatus | '')
+                          setTransitionProblem(null)
+                          setTransitionMessage('')
+                        }}
+                      >
+                        <option value="">Select an allowed status</option>
+                        {allowedTransitions[claim.status].map((status) => (
+                          <option key={status} value={status}>{displayLabel(status)}</option>
+                        ))}
+                      </select>
+                      <button
+                        className="primary-button"
+                        type="submit"
+                        disabled={!nextStatus || isTransitioning}
+                      >
+                        {isTransitioning ? 'Updating…' : 'Update status'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <p className="terminal-status">This claim is in a terminal status.</p>
+                )}
+                {transitionMessage && <p className="transition-success" role="status">{transitionMessage}</p>}
+                {transitionProblem && (
+                  <div className="transition-error" role="alert">
+                    <strong>Status not changed</strong>
+                    <p>{transitionProblem.message}</p>
+                    {transitionProblem.correlationId && (
+                      <small>Reference: {transitionProblem.correlationId}</small>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="history-section">
+                <h4>Claim history</h4>
+                <div aria-live="polite" aria-busy={isHistoryLoading}>
+                  {isHistoryLoading ? (
+                    <p className="history-loading">Loading claim history…</p>
+                  ) : historyProblem ? (
+                    <DetailError
+                      title="Unable to load claim history"
+                      problem={historyProblem}
+                      onRetry={reloadHistory}
+                    />
+                  ) : history ? (
+                    <StatusHistory changes={history} />
+                  ) : null}
+                </div>
+              </div>
             </>
           ) : null}
         </section>
@@ -197,6 +327,30 @@ export function ClaimDetailPanel({ claimId, onClose }: ClaimDetailPanelProps) {
         </section>
       </div>
     </section>
+  )
+}
+
+function StatusHistory({ changes }: { changes: ClaimStatusChange[] }) {
+  if (changes.length === 0) return <p className="history-empty">No status history is available.</p>
+
+  return (
+    <ol className="status-history">
+      {changes.map((change) => (
+        <li key={change.id}>
+          <span className="history-marker" aria-hidden="true" />
+          <div>
+            <strong>
+              {change.previousStatus
+                ? `${displayLabel(change.previousStatus)} → ${displayLabel(change.newStatus)}`
+                : 'Claim submitted'}
+            </strong>
+            <time dateTime={change.changedAt}>
+              {timestampFormatter.format(new Date(change.changedAt))}
+            </time>
+          </div>
+        </li>
+      ))}
+    </ol>
   )
 }
 
