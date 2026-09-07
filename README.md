@@ -10,7 +10,9 @@ This edition includes two Spring Boot services. The claims service owns claim in
 lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
 calls a synthetic policy service to confirm that the policy is active, covers the
 incident date, and covers the requested claim type. Accepted submissions also create
-a pending, versioned integration event through a transactional outbox.
+a pending, versioned integration event through a transactional outbox. A scheduled
+publisher safely claims those events and publishes them to RabbitMQ with routing and
+publisher-confirm checks before recording them as published.
 
 ## Claim lifecycle
 
@@ -52,8 +54,8 @@ Maven does not need to be installed globally. The claims service includes Maven 
 
 ## Build and test the services
 
-Docker Desktop must be running because the persistence integration test starts a
-disposable PostgreSQL container with Testcontainers.
+Docker Desktop must be running because the integration tests start disposable
+PostgreSQL and RabbitMQ containers with Testcontainers.
 
 ```bash
 cd services/claims-service
@@ -77,11 +79,17 @@ password:
 cp .env.example .env
 ```
 
-Edit `.env`, replace `replace-with-a-local-password`, and then start PostgreSQL:
+Edit `.env`, replace both password placeholders, and then start PostgreSQL and
+RabbitMQ:
 
 ```bash
-docker compose up --detach --wait postgres
+docker compose up --detach --wait postgres rabbitmq
 ```
+
+The RabbitMQ management UI is available at `http://localhost:15672`. Sign in with
+the `RABBITMQ_USERNAME` and `RABBITMQ_PASSWORD` values from your local `.env` file.
+These are credentials for this project's local RabbitMQ server; they are unrelated
+to a Docker Hub login.
 
 Start the policy service in a first terminal:
 
@@ -121,10 +129,10 @@ The readiness probe can be checked independently at
 Kubernetes can use this signal to decide whether the service is ready to receive
 traffic.
 
-When finished, stop PostgreSQL from the repository root with `docker compose down`.
-The named volume keeps the data for the next run. Running
-`docker compose down --volumes` also deletes the local database and should only be
-used when you intentionally want a clean reset.
+When finished, stop PostgreSQL and RabbitMQ from the repository root with
+`docker compose down`. Named volumes keep their data for the next run. Running
+`docker compose down --volumes` also deletes the local database and broker data and
+should only be used when you intentionally want a clean reset.
 
 ## Synthetic policy catalog
 
@@ -205,13 +213,19 @@ flowchart LR
     T --> C["claims row"]
     T --> H["status-history row"]
     T --> O["outbox event: PENDING"]
-    O -. "next milestone" .-> R["RabbitMQ publisher"]
+    O --> L["publisher lease: PUBLISHING"]
+    L --> R["RabbitMQ topic exchange"]
+    R --> Q["summary-request queue"]
+    R --> A["broker confirm + routing check"]
+    A --> P["outbox event: PUBLISHED"]
+    L --> F["temporary failure: FAILED"]
+    F --> L
 ```
 
 This solves the dual-write problem. If the application stored a claim and then sent
 directly to RabbitMQ, a crash between those operations could leave a claim with no
-event. The outbox makes PostgreSQL the single atomic boundary. A later publisher can
-repeatedly scan durable pending rows until RabbitMQ confirms delivery.
+event. The outbox makes PostgreSQL the single atomic boundary. The publisher can
+repeatedly scan durable rows until RabbitMQ confirms delivery.
 
 Each outbox row has a unique event ID, `claim.submitted` event type, version `1`,
 claim aggregate ID, correlation ID, occurrence time, JSON payload, delivery status,
@@ -219,20 +233,58 @@ attempt count, and retry timestamps. The payload contains only the fields the fu
 summary worker needs. It omits claimant name and policy number to demonstrate data
 minimization across service boundaries.
 
-After submitting the example claim, inspect its pending event from the repository
+## RabbitMQ publication
+
+The publisher polls in batches and atomically changes eligible rows from `PENDING`
+or `FAILED` to `PUBLISHING`. PostgreSQL's `FOR UPDATE SKIP LOCKED` allows multiple
+service instances to divide the work without waiting on each other's selected rows.
+Each claim also receives a 15-second lease. If an instance crashes while it owns an
+event, a later polling cycle can reclaim that expired `PUBLISHING` row.
+
+The RabbitMQ contract is deliberately explicit:
+
+| Component | Name | Purpose |
+| --- | --- | --- |
+| Durable topic exchange | `claims.events` | Receives versioned claims integration events |
+| Routing key | `claim.submitted.v1` | Identifies the event type and contract version |
+| Durable queue | `claim.summary.requests.v1` | Holds work for the future summary consumer |
+
+Messages are persistent and carry the event ID as the AMQP message ID, the request
+correlation ID, event type and version, and aggregate metadata. The body is the exact
+JSON envelope stored in the outbox; the publisher does not reconstruct or silently
+change it.
+
+Correlated publisher confirms prove that RabbitMQ accepted a message. Mandatory
+publishing plus returned-message checks separately prove that the routing key reached
+a queue. The outbox row becomes `PUBLISHED` only after both conditions hold. A
+temporary failure becomes `FAILED` and is eligible again after five seconds.
+
+This is an **at-least-once** design. A crash after RabbitMQ accepts a message but
+before PostgreSQL records `PUBLISHED` can cause the same event ID to be sent again.
+The future consumer must therefore be idempotent. Limited retry counts, dead-letter
+queues, and controlled replay are intentionally left for the next reliability story.
+
+After submitting the example claim, inspect publication state from the repository
 root:
 
 ```bash
 docker compose exec postgres psql \
   --username "$CLAIMS_DB_USERNAME" \
   --dbname "$CLAIMS_DB_NAME" \
-  --command "SELECT event_type, event_version, status, attempt_count, aggregate_id FROM outbox_events;"
+  --command "SELECT event_type, event_version, status, attempt_count, published_at FROM outbox_events;"
 ```
 
-At this milestone, `PENDING` is the expected status: RabbitMQ publication is
-intentionally implemented in the next bounded story. Duplicate or rejected claims
-do not produce outbox events. If event insertion fails, the claim and history insert
-are rolled back with it.
+For a healthy broker, the expected status is `PUBLISHED` with attempt count `1`.
+Because no consumer exists yet, the message remains ready in the queue. Verify that
+with:
+
+```bash
+docker compose exec rabbitmq rabbitmqctl list_queues \
+  name durable messages_ready messages_unacknowledged
+```
+
+Duplicate or rejected claims do not produce outbox events. If event insertion fails,
+the claim and history insert are rolled back with it.
 
 ## Retrieve and browse claims
 

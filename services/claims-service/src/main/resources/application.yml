@@ -15,6 +15,15 @@ spring:
           time_zone: UTC
   flyway:
     enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:claims_app}
+    password: ${RABBITMQ_PASSWORD:}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
@@ -38,6 +47,13 @@ info:
     description: Insurance claims intake and orchestration service
 
 integration:
+  outbox:
+    publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
+    batch-size: 25
+    poll-interval: 1s
+    lease-duration: 15s
+    retry-delay: 5s
+    confirm-timeout: 5s
   policy:
     base-url: ${POLICY_SERVICE_BASE_URL:http://localhost:8082}
     connect-timeout: 1s
