@@ -46,7 +46,10 @@ public class ClaimController {
   @ApiResponses({
     @ApiResponse(responseCode = "201", description = "Claim created"),
     @ApiResponse(responseCode = "400", description = "Request validation failed"),
-    @ApiResponse(responseCode = "409", description = "External reference already exists")
+    @ApiResponse(responseCode = "409", description = "External reference already exists"),
+    @ApiResponse(responseCode = "422", description = "Policy does not cover the claim"),
+    @ApiResponse(responseCode = "502", description = "Policy service response was invalid"),
+    @ApiResponse(responseCode = "503", description = "Policy validation is unavailable")
   })
   ResponseEntity<ClaimResponse> createClaim(@Valid @RequestBody CreateClaimRequest request) {
     Claim claim = claimSubmissionService.submit(request.toCommand());

@@ -2,9 +2,13 @@ package com.rohantummala.insurance.claims.infrastructure.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
+import com.rohantummala.insurance.claims.application.policy.PolicyValidationResult;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
+import com.rohantummala.insurance.claims.application.port.PolicyValidationPort;
 import com.rohantummala.insurance.claims.application.query.ClaimPage;
 import com.rohantummala.insurance.claims.application.query.ClaimQuery;
 import com.rohantummala.insurance.claims.application.service.ClaimStatusService;
@@ -16,12 +20,14 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -42,6 +48,14 @@ class JpaClaimRepositoryAdapterTest {
   @Autowired private ClaimSubmissionService claimSubmissionService;
 
   @Autowired private ClaimStatusService claimStatusService;
+
+  @MockitoBean private PolicyValidationPort policyValidationPort;
+
+  @BeforeEach
+  void acceptSyntheticPolicies() {
+    when(policyValidationPort.validate(any()))
+        .thenReturn(new PolicyValidationResult(true, "VALID", "Policy covers this claim"));
+  }
 
   @Test
   void persistsAndQueriesTheCompleteDomainModel() {
