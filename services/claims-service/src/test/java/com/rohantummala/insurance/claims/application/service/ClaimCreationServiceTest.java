@@ -8,9 +8,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
+import com.rohantummala.insurance.claims.application.event.ClaimSubmittedEventFactory;
+import com.rohantummala.insurance.claims.application.event.EventEnvelope;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
 import com.rohantummala.insurance.claims.application.port.ClaimStatusHistoryRepository;
+import com.rohantummala.insurance.claims.application.port.OutboxRepository;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatus;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatusChange;
@@ -36,13 +39,19 @@ class ClaimCreationServiceTest {
 
   @Mock private ClaimStatusHistoryRepository historyRepository;
 
+  @Mock private OutboxRepository outboxRepository;
+
   private ClaimCreationService service;
 
   @BeforeEach
   void setUp() {
     service =
         new ClaimCreationService(
-            claimRepository, historyRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+            claimRepository,
+            historyRepository,
+            outboxRepository,
+            new ClaimSubmittedEventFactory(() -> "correlation-1001"),
+            Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   @Test
@@ -64,6 +73,17 @@ class ClaimCreationServiceTest {
     assertThat(historyCaptor.getValue().claimId()).isEqualTo(result.id());
     assertThat(historyCaptor.getValue().previousStatus()).isNull();
     assertThat(historyCaptor.getValue().newStatus()).isEqualTo(ClaimStatus.SUBMITTED);
+
+    ArgumentCaptor<EventEnvelope<?>> eventCaptor = ArgumentCaptor.forClass(EventEnvelope.class);
+    verify(outboxRepository).append(eventCaptor.capture());
+    EventEnvelope<?> event = eventCaptor.getValue();
+    assertThat(event.eventId()).isNotNull();
+    assertThat(event.eventType()).isEqualTo("claim.submitted");
+    assertThat(event.eventVersion()).isEqualTo(1);
+    assertThat(event.aggregateType()).isEqualTo("claim");
+    assertThat(event.aggregateId()).isEqualTo(result.id());
+    assertThat(event.correlationId()).isEqualTo("correlation-1001");
+    assertThat(event.occurredAt()).isEqualTo(NOW);
   }
 
   @Test
@@ -73,6 +93,7 @@ class ClaimCreationServiceTest {
     assertThatThrownBy(() -> service.create(command("EXT-1001")))
         .isInstanceOf(DuplicateClaimExternalReferenceException.class);
     verify(historyRepository, never()).append(any());
+    verify(outboxRepository, never()).append(any());
   }
 
   private SubmitClaimCommand command(String externalReference) {
