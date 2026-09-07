@@ -83,3 +83,35 @@ The password comes only from your local environment. When enabled, readiness rep
 `UP` only when both the result publisher and request consumer are connected. Submit a
 claim through the existing API walkthrough, then retrieve its generated result from
 `GET /api/v1/claims/{claimId}/summary`.
+
+## Optional OpenAI provider
+
+The mock provider remains the default and requires no external account. To exercise a
+real model, set the provider explicitly and supply the API key through the standard
+`OPENAI_API_KEY` environment variable:
+
+```bash
+export CLAIM_SUMMARY_WORKER_SUMMARY_PROVIDER=openai
+export OPENAI_API_KEY="replace-with-your-api-key"
+```
+
+The current default model is `gpt-6-astra`. Override it without changing code when an
+environment needs a different compatible model:
+
+```bash
+export CLAIM_SUMMARY_WORKER_OPENAI_MODEL=gpt-6-astra
+```
+
+The OpenAI adapter uses the Responses API and converts `ClaimSummaryOutput` into a
+strict response schema. It sends the fixed safety policy as model instructions and
+the allowlisted claim fields as separate untrusted JSON data. Requests are not stored,
+are limited to 1,000 output tokens, time out after 30 seconds, and receive at most two
+SDK retries by default. These controls can be tuned with
+`CLAIM_SUMMARY_WORKER_OPENAI_MAX_OUTPUT_TOKENS`,
+`CLAIM_SUMMARY_WORKER_OPENAI_TIMEOUT_SECONDS`, and
+`CLAIM_SUMMARY_WORKER_OPENAI_MAX_RETRIES`.
+
+An absent key fails configuration immediately when `openai` is selected. API failures,
+refusals, incomplete generations, and missing parsed output become sanitized processing
+failures, allowing the existing RabbitMQ retry and dead-letter policy to handle them.
+The key and raw upstream error details are never included in those errors.
