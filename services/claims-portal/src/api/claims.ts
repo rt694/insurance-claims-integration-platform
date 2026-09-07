@@ -59,6 +59,14 @@ export interface ClaimSummary {
   generatedAt: string
 }
 
+export interface ClaimStatusChange {
+  id: string
+  claimId: string
+  previousStatus?: ClaimStatus | null
+  newStatus: ClaimStatus
+  changedAt: string
+}
+
 interface ClaimFilters {
   page: number
   size: number
@@ -136,6 +144,18 @@ function isClaimSummary(value: unknown): value is ClaimSummary {
     HUMAN_REVIEW_QUEUES.includes(value.recommendedHumanReviewQueue as HumanReviewQueue) &&
     isStringArray(value.safetyFlags) &&
     typeof value.generatedAt === 'string'
+  )
+}
+
+function isClaimStatusChange(value: unknown): value is ClaimStatusChange {
+  return (
+    isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.claimId === 'string' &&
+    (value.previousStatus == null ||
+      CLAIM_STATUSES.includes(value.previousStatus as ClaimStatus)) &&
+    CLAIM_STATUSES.includes(value.newStatus as ClaimStatus) &&
+    typeof value.changedAt === 'string'
   )
 }
 
@@ -264,6 +284,54 @@ export async function getClaimSummary(
   }
   if (!isClaimSummary(body) || body.claimId !== claimId) {
     throw new ApiProblem('The claims service returned an unexpected summary response.')
+  }
+  return body
+}
+
+export async function getClaimHistory(
+  claimId: string,
+  signal?: AbortSignal,
+): Promise<ClaimStatusChange[]> {
+  const response = await fetch(`/api/v1/claims/${encodeURIComponent(claimId)}/history`, {
+    headers: {
+      Accept: 'application/json',
+      'X-Correlation-ID': correlationId(),
+    },
+    signal,
+  })
+  const body = await readJson(response)
+
+  if (!response.ok) {
+    const problem = problemDetails(body)
+    throw new ApiProblem(problem?.detail ?? `The claims service returned ${response.status}.`, problem)
+  }
+  if (
+    !Array.isArray(body) ||
+    !body.every((change) => isClaimStatusChange(change) && change.claimId === claimId)
+  ) {
+    throw new ApiProblem('The claims service returned an unexpected history response.')
+  }
+  return body
+}
+
+export async function updateClaimStatus(id: string, status: ClaimStatus): Promise<Claim> {
+  const response = await fetch(`/api/v1/claims/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Correlation-ID': correlationId(),
+    },
+    body: JSON.stringify({ status }),
+  })
+  const body = await readJson(response)
+
+  if (!response.ok) {
+    const problem = problemDetails(body)
+    throw new ApiProblem(problem?.detail ?? `The claims service returned ${response.status}.`, problem)
+  }
+  if (!isClaim(body) || body.id !== id) {
+    throw new ApiProblem('The claims service returned an unexpected status response.')
   }
   return body
 }
