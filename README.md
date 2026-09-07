@@ -18,10 +18,11 @@ also consume a versioned synthetic summary result, validate and store it, and ex
 that reviewer-assistance data without changing the claim's lifecycle status. Summary
 consumption now includes delayed bounded retries, durable dead-letter storage,
 transactional duplicate detection, and a disabled-by-default replay operation.
-The FastAPI worker foundation defines the strict `claim.submitted.v1` input contract,
-the future model-output schema, the fixed reviewer-assistance safety policy, and
-liveness/readiness endpoints. RabbitMQ processing and model providers are the next
-worker stories.
+The FastAPI worker defines the strict `claim.submitted.v1` input contract, the future
+model-output schema, the fixed reviewer-assistance safety policy, and a reliable
+RabbitMQ consumer adapter. The adapter uses manual acknowledgements, bounded delayed
+retries, dead-letter routing, and broker-aware readiness. Model providers and result
+publication are the next worker stories.
 
 ## Claim lifecycle
 
@@ -94,7 +95,7 @@ cd services/claim-summary-worker
 The `.python-version` file makes `uv` select Python 3.12, and `uv.lock` pins the
 complete dependency graph so local development and CI use the same package versions.
 
-## Python worker foundation
+## Python worker foundation and RabbitMQ ingestion
 
 The worker rejects unsupported event types and versions, mismatched aggregate and
 claim IDs, unknown fields, invalid enum values, and event bodies over 64 KB. Its
@@ -117,9 +118,16 @@ cd services/claim-summary-worker
 
 Check `http://localhost:8083/health/live` and
 `http://localhost:8083/health/ready`. Interactive OpenAPI documentation is available
-at `http://localhost:8083/docs`. Readiness currently proves that configuration and
-the fixed safety policy loaded; the RabbitMQ worker story will extend it to broker
-connectivity and consumer state.
+at `http://localhost:8083/docs`. With consumption disabled, readiness proves that
+configuration and the fixed safety policy loaded. Once an injected consumer is
+enabled, readiness also requires an active RabbitMQ connection and consumer.
+
+The broker adapter is intentionally disabled until the next story injects the
+provider-and-result-publisher handler. Its delivery rules are already executable and
+verified against RabbitMQ through the worker's pytest suite: successful handler
+completion produces the ACK, invalid contracts go to a durable request DLQ, transient
+failures receive a five-second delayed retry, and failure routing must be
+broker-confirmed before the original delivery is acknowledged.
 
 ## Run and manually verify both services
 
@@ -298,7 +306,9 @@ The RabbitMQ contract is deliberately explicit:
 | --- | --- | --- |
 | Durable topic exchange | `claims.events` | Receives versioned claims integration events |
 | Routing key | `claim.submitted.v1` | Identifies the event type and contract version |
-| Durable queue | `claim.summary.requests.v1` | Holds work for the future summary consumer |
+| Durable queue | `claim.summary.requests.v1` | Holds work for the claim-summary consumer |
+| Durable quorum queue | `claim.summary.requests.retry.v1` | Delays transient worker failures for five seconds before returning them to the request queue |
+| Durable queue | `claim.summary.requests.dlq.v1` | Preserves invalid or exhausted worker requests for investigation |
 | Routing key | `claim.summary.completed.v1` | Identifies a completed summary contract |
 | Durable queue | `claim.summary.results.v1` | Holds summary results for the claims service |
 | Durable topic exchange | `claims.retry` | Routes transiently failed summary results to a delay queue |
