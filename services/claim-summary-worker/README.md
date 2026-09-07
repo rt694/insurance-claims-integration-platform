@@ -1,7 +1,8 @@
 # Claim Summary Worker
 
-Python/FastAPI worker for safely receiving synthetic `claim.submitted.v1` events and,
-in the next story, generating structured reviewer-assistance summaries.
+Python/FastAPI worker for safely receiving synthetic `claim.submitted.v1` events,
+generating deterministic local reviewer assistance, and publishing versioned
+`claim.summary.completed.v1` results.
 
 The worker must never approve, deny, price, or determine coverage for a claim. Claim
 descriptions are untrusted data and cannot modify the worker's fixed safety policy.
@@ -48,9 +49,37 @@ manual acknowledgements, and a configurable prefetch count.
 - If retry or dead-letter publication cannot be confirmed, the original delivery is
   requeued instead of being lost.
 
-Consumption remains disabled by default until the provider-and-result-publisher story
-supplies the real handler. This prevents the foundation from acknowledging a valid
-claim without producing its summary. When consumption is enabled, the RabbitMQ
-password is required through
-`CLAIM_SUMMARY_WORKER_RABBITMQ_PASSWORD`; it is never stored in this repository.
-Readiness then reports `UP` only while that injected consumer is connected and active.
+## Mock summary provider and result publication
+
+The default `MockSummaryProvider` is deterministic: it proves the provider interface
+and strict output contract without making a network call. It summarizes structured
+facts, recommends only a human review queue, reports that supporting documentation is
+not present in the event, and flags obvious instruction-like text without repeating
+or obeying it. It never approves, denies, prices, or determines coverage.
+
+The processor rejects a provider result whose claim ID differs from the consumed
+claim. It derives a stable completed-event ID from the source event ID, so RabbitMQ
+redelivery produces the same downstream identity and the claims-service inbox can
+recognize the duplicate. The result publisher sends persistent JSON to
+`claims.events` with routing key `claim.summary.completed.v1`, mandatory routing, and
+publisher confirms.
+
+Consumption remains disabled by default. To run the complete local pipeline after
+the claims service has declared the RabbitMQ topology, load your ignored `.env` and
+explicitly enable the worker:
+
+```bash
+cd services/claim-summary-worker
+set -a
+source ../../.env
+set +a
+export CLAIM_SUMMARY_WORKER_RABBITMQ_ENABLED=true
+export CLAIM_SUMMARY_WORKER_RABBITMQ_USERNAME="$RABBITMQ_USERNAME"
+export CLAIM_SUMMARY_WORKER_RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
+~/.local/bin/uv run uvicorn claim_summary_worker.main:app --app-dir src --port 8083
+```
+
+The password comes only from your local environment. When enabled, readiness reports
+`UP` only when both the result publisher and request consumer are connected. Submit a
+claim through the existing API walkthrough, then retrieve its generated result from
+`GET /api/v1/claims/{claimId}/summary`.

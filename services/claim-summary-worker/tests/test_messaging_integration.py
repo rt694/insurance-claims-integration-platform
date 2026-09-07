@@ -10,29 +10,25 @@ from pydantic import SecretStr
 from testcontainers.community.rabbitmq import RabbitMqContainer
 
 from claim_summary_worker.config import WorkerSettings
-from claim_summary_worker.contracts import ClaimSubmittedEnvelope
+from claim_summary_worker.contracts import ClaimSummaryCompletedEnvelope
 from claim_summary_worker.messaging import (
     CLAIM_SUBMITTED_ROUTING_KEY,
+    CLAIM_SUMMARY_COMPLETED_ROUTING_KEY,
     CLAIM_SUMMARY_REQUESTS_DEAD_LETTER_QUEUE,
     CLAIM_SUMMARY_REQUESTS_QUEUE,
     CLAIM_SUMMARY_REQUESTS_RETRY_QUEUE,
+    CLAIM_SUMMARY_RESULTS_QUEUE,
     CLAIMS_DEAD_LETTER_EXCHANGE,
     CLAIMS_EVENTS_EXCHANGE,
     CLAIMS_RETRY_EXCHANGE,
     FAILURE_TYPE_HEADER,
     INVALID_CONTRACT_FAILURE,
     RabbitMqConsumer,
+    RabbitMqResultPublisher,
 )
-
-
-class SignalingHandler:
-    def __init__(self) -> None:
-        self.processed = asyncio.Event()
-        self.event: ClaimSubmittedEnvelope | None = None
-
-    async def handle(self, event: ClaimSubmittedEnvelope) -> None:
-        self.event = event
-        self.processed.set()
+from claim_summary_worker.processing import ClaimSummaryProcessor
+from claim_summary_worker.providers import MockSummaryProvider
+from claim_summary_worker.runtime import WorkerRuntime
 
 
 @pytest.mark.integration
@@ -103,21 +99,25 @@ async def exercise_consumer(
         CLAIM_SUMMARY_REQUESTS_DEAD_LETTER_QUEUE, durable=True
     )
     await dead_letter_queue.bind(dead_letter_exchange, CLAIM_SUBMITTED_ROUTING_KEY)
+    results_queue = await topology_channel.declare_queue(CLAIM_SUMMARY_RESULTS_QUEUE, durable=True)
+    await results_queue.bind(events_exchange, CLAIM_SUMMARY_COMPLETED_ROUTING_KEY)
 
-    handler = SignalingHandler()
-    consumer = RabbitMqConsumer(
-        WorkerSettings(
-            rabbitmq_enabled=True,
-            rabbitmq_host=host,
-            rabbitmq_port=port,
-            rabbitmq_username=username,
-            rabbitmq_password=SecretStr(password),
-        ),
-        handler,
+    settings = WorkerSettings(
+        rabbitmq_enabled=True,
+        rabbitmq_host=host,
+        rabbitmq_port=port,
+        rabbitmq_username=username,
+        rabbitmq_password=SecretStr(password),
     )
-    await consumer.start()
+    publisher = RabbitMqResultPublisher(settings)
+    consumer = RabbitMqConsumer(
+        settings,
+        ClaimSummaryProcessor(MockSummaryProvider(), publisher),
+    )
+    runtime = WorkerRuntime(publisher, consumer)
+    await runtime.start()
     try:
-        assert consumer.is_ready is True
+        assert runtime.is_ready is True
         await events_exchange.publish(
             Message(
                 json.dumps(claim_event).encode(),
@@ -126,8 +126,13 @@ async def exercise_consumer(
             ),
             CLAIM_SUBMITTED_ROUTING_KEY,
         )
-        await asyncio.wait_for(handler.processed.wait(), timeout=5)
-        assert handler.event is not None
+        result_message = await wait_for_message(results_queue)
+        completed = ClaimSummaryCompletedEnvelope.model_validate_json(result_message.body)
+        assert completed.event_type == "claim.summary.completed"
+        assert completed.aggregate_id == completed.data.claim_id
+        assert completed.correlation_id == claim_event["correlationId"]
+        assert "requires human review" in completed.data.summary
+        await result_message.ack()
 
         await events_exchange.publish(
             Message(b'{"eventType":"unsupported"}', delivery_mode=DeliveryMode.PERSISTENT),
@@ -137,7 +142,7 @@ async def exercise_consumer(
         assert dead_letter.headers[FAILURE_TYPE_HEADER] == INVALID_CONTRACT_FAILURE
         await dead_letter.ack()
     finally:
-        await consumer.close()
+        await runtime.close()
         await topology_connection.close()
 
 

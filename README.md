@@ -6,7 +6,7 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current edition
 
-This edition includes two Spring Boot services and the foundation of a Python worker.
+This edition includes two Spring Boot services and a locally runnable Python worker.
 The claims service owns claim intake,
 lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
 calls a synthetic policy service to confirm that the policy is active, covers the
@@ -18,11 +18,11 @@ also consume a versioned synthetic summary result, validate and store it, and ex
 that reviewer-assistance data without changing the claim's lifecycle status. Summary
 consumption now includes delayed bounded retries, durable dead-letter storage,
 transactional duplicate detection, and a disabled-by-default replay operation.
-The FastAPI worker defines the strict `claim.submitted.v1` input contract, the future
-model-output schema, the fixed reviewer-assistance safety policy, and a reliable
-RabbitMQ consumer adapter. The adapter uses manual acknowledgements, bounded delayed
-retries, dead-letter routing, and broker-aware readiness. Model providers and result
-publication are the next worker stories.
+The FastAPI worker defines strict request/result contracts, a fixed reviewer-assistance
+safety policy, a reliable RabbitMQ consumer, a deterministic mock summary provider,
+and confirmed `claim.summary.completed.v1` publication. It uses manual acknowledgements,
+bounded delayed retries, dead-letter routing, stable event IDs for redelivery, and
+broker-aware readiness. An optional real provider is the next worker story.
 
 ## Claim lifecycle
 
@@ -95,7 +95,7 @@ cd services/claim-summary-worker
 The `.python-version` file makes `uv` select Python 3.12, and `uv.lock` pins the
 complete dependency graph so local development and CI use the same package versions.
 
-## Python worker foundation and RabbitMQ ingestion
+## Python worker processing pipeline
 
 The worker rejects unsupported event types and versions, mismatched aggregate and
 claim IDs, unknown fields, invalid enum values, and event bodies over 64 KB. Its
@@ -109,7 +109,7 @@ replace the worker's safety instructions. The strict output schema permits summa
 missing-information lists, human-review queues, and safety flags—but no approval,
 denial, pricing, or coverage decision.
 
-Run the foundation API locally:
+Run the operational API without broker consumption:
 
 ```bash
 cd services/claim-summary-worker
@@ -122,12 +122,18 @@ at `http://localhost:8083/docs`. With consumption disabled, readiness proves tha
 configuration and the fixed safety policy loaded. Once an injected consumer is
 enabled, readiness also requires an active RabbitMQ connection and consumer.
 
-The broker adapter is intentionally disabled until the next story injects the
-provider-and-result-publisher handler. Its delivery rules are already executable and
-verified against RabbitMQ through the worker's pytest suite: successful handler
-completion produces the ACK, invalid contracts go to a durable request DLQ, transient
-failures receive a five-second delayed retry, and failure routing must be
-broker-confirmed before the original delivery is acknowledged.
+The broker adapter is disabled by default, but the composition root now wires a mock
+provider and result publisher whenever
+`CLAIM_SUMMARY_WORKER_RABBITMQ_ENABLED=true`. The result publisher starts before the
+consumer, waits for broker confirmation, and creates an event ID deterministically
+from the source event ID. Only then does successful handling lead to the request ACK.
+Invalid contracts go to a durable request DLQ, while transient failures receive a
+five-second delayed retry.
+
+The mock provider intentionally demonstrates the interface and safety contract rather
+than pretending to make a real AI inference. It never repeats instruction-like claim
+text and cannot emit claim decisions. See the worker README for the environment setup
+that enables the complete local consume → summarize → publish flow.
 
 ## Run and manually verify both services
 
