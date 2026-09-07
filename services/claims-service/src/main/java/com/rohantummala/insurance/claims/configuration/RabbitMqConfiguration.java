@@ -42,6 +42,18 @@ public class RabbitMqConfiguration {
   }
 
   @Bean
+  Queue claimSummaryRequestsRetryQueue(SummaryConsumerProperties properties) {
+    return QueueBuilder.durable(RabbitTopology.CLAIM_SUMMARY_REQUESTS_RETRY_QUEUE)
+        .quorum()
+        .withArgument("x-dead-letter-strategy", "at-least-once")
+        .withArgument("x-overflow", "reject-publish")
+        .ttl(Math.toIntExact(properties.retryDelay().toMillis()))
+        .deadLetterExchange(RabbitTopology.CLAIMS_EVENTS_EXCHANGE)
+        .deadLetterRoutingKey(RabbitTopology.CLAIM_SUBMITTED_ROUTING_KEY)
+        .build();
+  }
+
+  @Bean
   TopicExchange claimsRetryExchange() {
     return new TopicExchange(RabbitTopology.CLAIMS_RETRY_EXCHANGE, true, false);
   }
@@ -67,6 +79,14 @@ public class RabbitMqConfiguration {
   }
 
   @Bean
+  Binding claimSummaryRequestsRetryBinding(
+      TopicExchange claimsRetryExchange, Queue claimSummaryRequestsRetryQueue) {
+    return BindingBuilder.bind(claimSummaryRequestsRetryQueue)
+        .to(claimsRetryExchange)
+        .with(RabbitTopology.CLAIM_SUBMITTED_ROUTING_KEY);
+  }
+
+  @Bean
   TopicExchange claimsDeadLetterExchange() {
     return new TopicExchange(RabbitTopology.CLAIMS_DEAD_LETTER_EXCHANGE, true, false);
   }
@@ -77,11 +97,24 @@ public class RabbitMqConfiguration {
   }
 
   @Bean
+  Queue claimSummaryRequestsDeadLetterQueue() {
+    return QueueBuilder.durable(RabbitTopology.CLAIM_SUMMARY_REQUESTS_DEAD_LETTER_QUEUE).build();
+  }
+
+  @Bean
   Binding claimSummaryResultsDeadLetterBinding(
       TopicExchange claimsDeadLetterExchange, Queue claimSummaryResultsDeadLetterQueue) {
     return BindingBuilder.bind(claimSummaryResultsDeadLetterQueue)
         .to(claimsDeadLetterExchange)
         .with(RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY);
+  }
+
+  @Bean
+  Binding claimSummaryRequestsDeadLetterBinding(
+      TopicExchange claimsDeadLetterExchange, Queue claimSummaryRequestsDeadLetterQueue) {
+    return BindingBuilder.bind(claimSummaryRequestsDeadLetterQueue)
+        .to(claimsDeadLetterExchange)
+        .with(RabbitTopology.CLAIM_SUBMITTED_ROUTING_KEY);
   }
 
   @Bean

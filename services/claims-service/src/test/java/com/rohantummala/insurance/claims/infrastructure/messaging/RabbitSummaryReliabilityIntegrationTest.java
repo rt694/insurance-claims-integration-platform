@@ -51,6 +51,9 @@ class RabbitSummaryReliabilityIntegrationTest {
           channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_RESULTS_QUEUE);
           channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_RESULTS_RETRY_QUEUE);
           channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_RESULTS_DEAD_LETTER_QUEUE);
+          channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_REQUESTS_QUEUE);
+          channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_REQUESTS_RETRY_QUEUE);
+          channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_REQUESTS_DEAD_LETTER_QUEUE);
           return null;
         });
   }
@@ -98,6 +101,30 @@ class RabbitSummaryReliabilityIntegrationTest {
         .isNull();
     assertThat(
             (Object) replayed.getMessageProperties().getHeader(RabbitTopology.REPLAYED_AT_HEADER))
+        .isNotNull();
+  }
+
+  @Test
+  void delaysAWorkerRetryThenReturnsItToTheRequestsQueue() {
+    rabbitTemplate.send(
+        RabbitTopology.CLAIMS_RETRY_EXCHANGE,
+        RabbitTopology.CLAIM_SUBMITTED_ROUTING_KEY,
+        message());
+
+    assertThat(rabbitTemplate.receive(RabbitTopology.CLAIM_SUMMARY_REQUESTS_QUEUE, 100)).isNull();
+    assertThat(rabbitTemplate.receive(RabbitTopology.CLAIM_SUMMARY_REQUESTS_QUEUE, 5_000))
+        .isNotNull();
+  }
+
+  @Test
+  void routesAnInvalidWorkerRequestToItsDeadLetterQueue() {
+    rabbitTemplate.send(
+        RabbitTopology.CLAIMS_DEAD_LETTER_EXCHANGE,
+        RabbitTopology.CLAIM_SUBMITTED_ROUTING_KEY,
+        message());
+
+    assertThat(
+            rabbitTemplate.receive(RabbitTopology.CLAIM_SUMMARY_REQUESTS_DEAD_LETTER_QUEUE, 5_000))
         .isNotNull();
   }
 
