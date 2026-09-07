@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import { ClaimDetailPanel } from './ClaimDetailPanel'
 import { ClaimSubmissionForm } from './ClaimSubmissionForm'
 import {
   ApiProblem,
@@ -48,6 +49,7 @@ function App() {
   const [reloadKey, setReloadKey] = useState(0)
   const [isSubmissionOpen, setIsSubmissionOpen] = useState(false)
   const [createdClaim, setCreatedClaim] = useState<Claim | null>(null)
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null)
 
   function startRequest(updateQuery: () => void) {
     setIsLoading(true)
@@ -90,6 +92,7 @@ function App() {
   function claimCreated(claim: Claim) {
     setCreatedClaim(claim)
     setIsSubmissionOpen(false)
+    setSelectedClaimId(null)
     startRequest(() => {
       setStatus('')
       setClaimType('')
@@ -147,6 +150,14 @@ function App() {
           </div>
         )}
 
+        {selectedClaimId && (
+          <ClaimDetailPanel
+            key={selectedClaimId}
+            claimId={selectedClaimId}
+            onClose={() => setSelectedClaimId(null)}
+          />
+        )}
+
         <section className="workspace" aria-labelledby="workspace-title">
           <div className="workspace-header">
             <div>
@@ -160,6 +171,7 @@ function App() {
                 disabled={isSubmissionOpen}
                 onClick={() => {
                   setCreatedClaim(null)
+                  setSelectedClaimId(null)
                   setIsSubmissionOpen(true)
                 }}
               >
@@ -267,11 +279,15 @@ function App() {
                       <th scope="col">Estimated loss</th>
                       <th scope="col">Status</th>
                       <th scope="col">Last updated</th>
+                      <th scope="col"><span className="visually-hidden">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {claims.map((claim) => (
-                      <tr key={claim.id}>
+                      <tr
+                        key={claim.id}
+                        className={selectedClaimId === claim.id ? 'selected-row' : undefined}
+                      >
                         <td><strong>{claim.externalReference}</strong><small>{claim.id.slice(0, 8)}</small></td>
                         <td>{claim.claimantName}</td>
                         <td>{displayLabel(claim.claimType)}</td>
@@ -279,6 +295,21 @@ function App() {
                         <td className="number-cell">{numberFormatter.format(claim.estimatedLoss)}</td>
                         <td><span className={`status status-${claim.status.toLowerCase()}`}>{displayLabel(claim.status)}</span></td>
                         <td>{dateFormatter.format(new Date(claim.updatedAt))}</td>
+                        <td>
+                          <button
+                            className="review-button"
+                            type="button"
+                            aria-label={`Review claim ${claim.externalReference}`}
+                            aria-expanded={selectedClaimId === claim.id}
+                            onClick={() => {
+                              setCreatedClaim(null)
+                              setIsSubmissionOpen(false)
+                              setSelectedClaimId(claim.id)
+                            }}
+                          >
+                            Review
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

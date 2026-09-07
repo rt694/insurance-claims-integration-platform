@@ -25,6 +25,15 @@ const claimPage = {
   totalPages: 1,
 }
 
+const claimSummary = {
+  claimId: claimPage.content[0].id,
+  summary: 'Vehicle damage requires human review.',
+  missingInformation: ['Police report'],
+  recommendedHumanReviewQueue: 'STANDARD_REVIEW',
+  safetyFlags: ['DESCRIPTION_REQUIRES_REVIEW'],
+  generatedAt: '2026-01-11T12:01:00Z',
+}
+
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
     ok,
@@ -236,5 +245,76 @@ describe('Claims portal', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('portal-create-400')
     expect(screen.getByText('External reference is already in use.')).toBeInTheDocument()
     expect(screen.getByRole('form', { name: 'Submit synthetic claim' })).toBeInTheDocument()
+  })
+
+  it('loads authoritative claim details and reviewer assistance', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/summary')) return Promise.resolve(jsonResponse(claimSummary))
+      if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
+        return Promise.resolve(jsonResponse(claimPage.content[0]))
+      }
+      return Promise.resolve(jsonResponse(claimPage))
+    })
+    render(<App />)
+    await screen.findByText('EXT-PORTAL-1001')
+
+    await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))
+
+    expect(await screen.findByText('Vehicle damage requires human review.')).toBeInTheDocument()
+    expect(screen.getByText('POL-AUTO-1001')).toBeInTheDocument()
+    expect(screen.getByText('Synthetic vehicle damage')).toBeInTheDocument()
+    expect(screen.getByText('Standard Review')).toBeInTheDocument()
+    expect(screen.getByText('Police report')).toBeInTheDocument()
+    expect(screen.getByText('Description Requires Review')).toBeInTheDocument()
+    expect(screen.getByText(/never approves, denies, prices, or determines coverage/i)).toBeInTheDocument()
+
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/v1/claims/${claimPage.content[0].id}/summary`,
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Correlation-ID': expect.any(String) }),
+      }),
+    )
+  })
+
+  it('treats a missing summary as pending and refreshes it independently', async () => {
+    const user = userEvent.setup()
+    let summaryRequests = 0
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/summary')) {
+        summaryRequests += 1
+        return Promise.resolve(
+          summaryRequests === 1
+            ? jsonResponse(
+                {
+                  type: 'urn:problem:claim-summary-not-found',
+                  status: 404,
+                  detail: `A summary is not yet available for claim ${claimPage.content[0].id}`,
+                  correlationId: 'portal-summary-pending',
+                },
+                false,
+                404,
+              )
+            : jsonResponse(claimSummary),
+        )
+      }
+      if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
+        return Promise.resolve(jsonResponse(claimPage.content[0]))
+      }
+      return Promise.resolve(jsonResponse(claimPage))
+    })
+    render(<App />)
+    await screen.findByText('EXT-PORTAL-1001')
+
+    await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))
+
+    expect(await screen.findByText('Summary processing')).toBeInTheDocument()
+    expect(screen.getByText(/generated summary is not ready yet/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Refresh summary' }))
+
+    expect(await screen.findByText('Vehicle damage requires human review.')).toBeInTheDocument()
+    expect(summaryRequests).toBe(2)
   })
 })

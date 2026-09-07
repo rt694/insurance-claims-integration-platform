@@ -43,6 +43,22 @@ export interface CreateClaimInput {
   estimatedLoss: number
 }
 
+export const HUMAN_REVIEW_QUEUES = [
+  'STANDARD_REVIEW',
+  'COMPLEX_REVIEW',
+  'SPECIALIST_REVIEW',
+] as const
+export type HumanReviewQueue = (typeof HUMAN_REVIEW_QUEUES)[number]
+
+export interface ClaimSummary {
+  claimId: string
+  summary: string
+  missingInformation: string[]
+  recommendedHumanReviewQueue: HumanReviewQueue
+  safetyFlags: string[]
+  generatedAt: string
+}
+
 interface ClaimFilters {
   page: number
   size: number
@@ -104,6 +120,22 @@ function isClaimPage(value: unknown): value is ClaimPage {
     typeof value.size === 'number' &&
     typeof value.totalElements === 'number' &&
     typeof value.totalPages === 'number'
+  )
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isClaimSummary(value: unknown): value is ClaimSummary {
+  return (
+    isObject(value) &&
+    typeof value.claimId === 'string' &&
+    typeof value.summary === 'string' &&
+    isStringArray(value.missingInformation) &&
+    HUMAN_REVIEW_QUEUES.includes(value.recommendedHumanReviewQueue as HumanReviewQueue) &&
+    isStringArray(value.safetyFlags) &&
+    typeof value.generatedAt === 'string'
   )
 }
 
@@ -189,6 +221,49 @@ export async function createClaim(input: CreateClaimInput): Promise<Claim> {
   }
   if (!isClaim(body)) {
     throw new ApiProblem('The claims service returned an unexpected response.')
+  }
+  return body
+}
+
+export async function getClaim(id: string, signal?: AbortSignal): Promise<Claim> {
+  const response = await fetch(`/api/v1/claims/${encodeURIComponent(id)}`, {
+    headers: {
+      Accept: 'application/json',
+      'X-Correlation-ID': correlationId(),
+    },
+    signal,
+  })
+  const body = await readJson(response)
+
+  if (!response.ok) {
+    const problem = problemDetails(body)
+    throw new ApiProblem(problem?.detail ?? `The claims service returned ${response.status}.`, problem)
+  }
+  if (!isClaim(body)) {
+    throw new ApiProblem('The claims service returned an unexpected claim response.')
+  }
+  return body
+}
+
+export async function getClaimSummary(
+  claimId: string,
+  signal?: AbortSignal,
+): Promise<ClaimSummary> {
+  const response = await fetch(`/api/v1/claims/${encodeURIComponent(claimId)}/summary`, {
+    headers: {
+      Accept: 'application/json',
+      'X-Correlation-ID': correlationId(),
+    },
+    signal,
+  })
+  const body = await readJson(response)
+
+  if (!response.ok) {
+    const problem = problemDetails(body)
+    throw new ApiProblem(problem?.detail ?? `The claims service returned ${response.status}.`, problem)
+  }
+  if (!isClaimSummary(body) || body.claimId !== claimId) {
+    throw new ApiProblem('The claims service returned an unexpected summary response.')
   }
   return body
 }
