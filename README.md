@@ -51,13 +51,13 @@ services/
 The policy service is deliberately separate: this makes the network boundary,
 failure handling, and service contract visible instead of hiding policy rules inside
 the claims application. Additional services, the Python worker, and the React portal
-will be added only when their milestones begin.
+will be added when those versions are pushed.
 
 ## Prerequisites
 
 - Java 17
 - Docker Desktop with Docker Compose
-- Node.js 24 LTS (for the later frontend milestone)
+- Node.js 24 LTS (for the later frontend edition)
 - Python 3.12 and uv
 
 Maven does not need to be installed globally. The claims service includes Maven Wrapper, which downloads and uses the project's configured Maven version.
