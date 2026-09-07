@@ -128,7 +128,7 @@ class JpaClaimRepositoryAdapterTest {
             .query(Integer.class)
             .single();
 
-    assertThat(migrationCount).isEqualTo(5);
+    assertThat(migrationCount).isEqualTo(6);
   }
 
   @Test

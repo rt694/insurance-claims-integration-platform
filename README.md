@@ -14,7 +14,9 @@ a pending, versioned integration event through a transactional outbox. A schedul
 publisher safely claims those events and publishes them to RabbitMQ with routing and
 publisher-confirm checks before recording them as published. The claims service can
 also consume a versioned synthetic summary result, validate and store it, and expose
-that reviewer-assistance data without changing the claim's lifecycle status.
+that reviewer-assistance data without changing the claim's lifecycle status. Summary
+consumption now includes delayed bounded retries, durable dead-letter storage,
+transactional duplicate detection, and a disabled-by-default replay operation.
 
 ## Claim lifecycle
 
@@ -252,6 +254,10 @@ The RabbitMQ contract is deliberately explicit:
 | Durable queue | `claim.summary.requests.v1` | Holds work for the future summary consumer |
 | Routing key | `claim.summary.completed.v1` | Identifies a completed summary contract |
 | Durable queue | `claim.summary.results.v1` | Holds summary results for the claims service |
+| Durable topic exchange | `claims.retry` | Routes transiently failed summary results to a delay queue |
+| Durable quorum queue | `claim.summary.results.retry.v1` | Delays a retry for five seconds before safely returning it to the results queue |
+| Durable topic exchange | `claims.dead-letter` | Routes terminal and exhausted failures for investigation |
+| Durable queue | `claim.summary.results.dlq.v1` | Preserves failed summary results until an operator replays them |
 
 Messages are persistent and carry the event ID as the AMQP message ID, the request
 correlation ID, event type and version, and aggregate metadata. The body is the exact
@@ -265,8 +271,8 @@ temporary failure becomes `FAILED` and is eligible again after five seconds.
 
 This is an **at-least-once** design. A crash after RabbitMQ accepts a message but
 before PostgreSQL records `PUBLISHED` can cause the same event ID to be sent again.
-The future consumer must therefore be idempotent. Limited retry counts, dead-letter
-queues, and controlled replay are intentionally left for the next reliability story.
+The summary-result consumer is therefore idempotent: it records processed event IDs
+and treats a repeated ID as an acknowledged no-op.
 
 After submitting the example claim, inspect publication state from the repository
 root:
@@ -303,17 +309,33 @@ The processing order is important:
 flowchart LR
     Q["summary-result queue"] --> D["decode and validate"]
     D --> T["database transaction"]
-    T --> S["claim_summaries row"]
+    T --> I["register event in inbox"]
+    I --> S["claim_summaries row"]
     S --> A["manual RabbitMQ ACK"]
-    D -->|"invalid contract"| R["reject without requeue"]
-    T -->|"temporary failure"| N["NACK and requeue"]
+    I -->|"duplicate event ID"| A
+    D -->|"invalid contract"| DLQ["durable dead-letter queue"]
+    T -->|"temporary failure"| R["five-second retry queue"]
+    R -->|"attempts remain"| Q
+    R -->|"third attempt fails"| DLQ
+    DLQ -->|"operator replay"| Q
 ```
 
 The acknowledgment happens only after the transactional service returns, so a
-database failure cannot silently discard the message. The table stores the source
-event ID, generated and received timestamps, summary text, missing-information list,
-recommended human-review queue, and safety flags. A newer generated result can
-replace an older one; an older late-arriving result cannot overwrite newer data.
+database failure cannot silently discard the message. The inbox event ID and summary
+are written in that same transaction. If summary storage fails, the inbox insert is
+rolled back; if RabbitMQ redelivers an already committed event, the primary key makes
+the second delivery a no-op. The summary table stores the source event ID, generated
+and received timestamps, summary text, missing-information list, recommended
+human-review queue, and safety flags. A newer generated result can replace an older
+one; an older late-arriving result cannot overwrite newer data.
+
+Transient failures receive at most three total processing attempts, separated by a
+five-second broker delay. Invalid contracts, unknown claims, and failures that exhaust
+the attempt limit are published to `claim.summary.results.dlq.v1`. The original
+delivery is acknowledged only after RabbitMQ confirms that the retry or dead-letter
+copy was accepted and routed. If that publication cannot be confirmed, the original
+delivery is requeued instead of being lost. Message bodies and exception details are
+not written to application logs.
 
 The supported review queues are `STANDARD_REVIEW`, `COMPLEX_REVIEW`, and
 `SPECIALIST_REVIEW`. These are routing suggestions for people, not claim decisions.
@@ -368,9 +390,36 @@ curl --silent "http://localhost:8080/api/v1/claims/$CLAIM_ID/summary"
 ```
 
 An existing claim without a result returns a `404` Problem Details response with
-type `urn:problem:claim-summary-not-found`. At this milestone, invalid messages are
-rejected and temporary failures are requeued. Bounded retries, dead-letter storage,
-idempotency records, and controlled replay are the next reliability story.
+type `urn:problem:claim-summary-not-found`.
+
+### Controlled dead-letter replay
+
+Replay is off by default. First fix the reason messages failed and inspect the
+dead-letter queue in RabbitMQ. For a local, temporary maintenance session, restart
+the claims service with both the replay feature and its Actuator web exposure enabled:
+
+```bash
+export DEAD_LETTER_REPLAY_ENABLED=true
+export MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,deadLetterReplay
+./mvnw spring-boot:run
+```
+
+Replay a bounded batch (between 1 and 100 messages):
+
+```bash
+curl --fail --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{"limit":10}' \
+  http://localhost:8080/actuator/deadLetterReplay
+```
+
+Each dead-letter message is acknowledged only after its publication back to
+`claims.events` is broker-confirmed. Replay removes the old retry/failure headers and
+adds a `replayedAt` timestamp. Disable the flag and remove the endpoint from exposure
+after maintenance. This local learning setup does not yet have endpoint authentication;
+production deployment must protect administrative Actuator operations with strong
+authentication and authorization.
 
 ## Retrieve and browse claims
 

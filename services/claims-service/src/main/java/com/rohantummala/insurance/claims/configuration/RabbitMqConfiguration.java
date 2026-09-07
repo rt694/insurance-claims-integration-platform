@@ -19,7 +19,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @Configuration
 @Profile("!in-memory")
 @EnableScheduling
-@EnableConfigurationProperties(OutboxPublisherProperties.class)
+@EnableConfigurationProperties({
+  OutboxPublisherProperties.class,
+  SummaryConsumerProperties.class,
+  DeadLetterReplayProperties.class
+})
 public class RabbitMqConfiguration {
 
   @Bean
@@ -35,6 +39,49 @@ public class RabbitMqConfiguration {
   @Bean
   Queue claimSummaryResultsQueue() {
     return QueueBuilder.durable(RabbitTopology.CLAIM_SUMMARY_RESULTS_QUEUE).build();
+  }
+
+  @Bean
+  TopicExchange claimsRetryExchange() {
+    return new TopicExchange(RabbitTopology.CLAIMS_RETRY_EXCHANGE, true, false);
+  }
+
+  @Bean
+  Queue claimSummaryResultsRetryQueue(SummaryConsumerProperties properties) {
+    return QueueBuilder.durable(RabbitTopology.CLAIM_SUMMARY_RESULTS_RETRY_QUEUE)
+        .quorum()
+        .withArgument("x-dead-letter-strategy", "at-least-once")
+        .withArgument("x-overflow", "reject-publish")
+        .ttl(Math.toIntExact(properties.retryDelay().toMillis()))
+        .deadLetterExchange(RabbitTopology.CLAIMS_EVENTS_EXCHANGE)
+        .deadLetterRoutingKey(RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY)
+        .build();
+  }
+
+  @Bean
+  Binding claimSummaryResultsRetryBinding(
+      TopicExchange claimsRetryExchange, Queue claimSummaryResultsRetryQueue) {
+    return BindingBuilder.bind(claimSummaryResultsRetryQueue)
+        .to(claimsRetryExchange)
+        .with(RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY);
+  }
+
+  @Bean
+  TopicExchange claimsDeadLetterExchange() {
+    return new TopicExchange(RabbitTopology.CLAIMS_DEAD_LETTER_EXCHANGE, true, false);
+  }
+
+  @Bean
+  Queue claimSummaryResultsDeadLetterQueue() {
+    return QueueBuilder.durable(RabbitTopology.CLAIM_SUMMARY_RESULTS_DEAD_LETTER_QUEUE).build();
+  }
+
+  @Bean
+  Binding claimSummaryResultsDeadLetterBinding(
+      TopicExchange claimsDeadLetterExchange, Queue claimSummaryResultsDeadLetterQueue) {
+    return BindingBuilder.bind(claimSummaryResultsDeadLetterQueue)
+        .to(claimsDeadLetterExchange)
+        .with(RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY);
   }
 
   @Bean

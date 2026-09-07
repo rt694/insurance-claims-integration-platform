@@ -70,6 +70,7 @@ class RabbitSummaryConsumptionIntegrationTest {
 
   @BeforeEach
   void resetState() {
+    jdbcClient.sql("DELETE FROM processed_inbox_events").update();
     jdbcClient.sql("DELETE FROM claim_summaries").update();
     jdbcClient.sql("DELETE FROM outbox_events").update();
     jdbcClient.sql("DELETE FROM claim_status_history").update();
@@ -77,6 +78,8 @@ class RabbitSummaryConsumptionIntegrationTest {
     rabbitTemplate.execute(
         channel -> {
           channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_RESULTS_QUEUE);
+          channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_RESULTS_RETRY_QUEUE);
+          channel.queuePurge(RabbitTopology.CLAIM_SUMMARY_RESULTS_DEAD_LETTER_QUEUE);
           return null;
         });
     when(policyValidationPort.validate(any()))
@@ -111,6 +114,7 @@ class RabbitSummaryConsumptionIntegrationTest {
               assertThat(stored.recommendedHumanReviewQueue())
                   .isEqualTo(HumanReviewQueue.STANDARD_REVIEW);
               assertThat(stored.safetyFlags()).containsExactly("DESCRIPTION_REQUIRES_REVIEW");
+              assertThat(processedEventCount(event.eventId())).isEqualTo(1);
             });
 
     await()
@@ -151,8 +155,42 @@ class RabbitSummaryConsumptionIntegrationTest {
     assertThat(correlationData.getReturned()).isNull();
     await()
         .atMost(Duration.ofSeconds(5))
-        .untilAsserted(() -> assertThat(resultQueueMessageCount()).isZero());
+        .untilAsserted(
+            () -> {
+              assertThat(resultQueueMessageCount()).isZero();
+              assertThat(deadLetterQueueMessageCount()).isEqualTo(1);
+            });
     assertThat(claimSummaryRepository.findByClaimId(claim.id())).isEmpty();
+  }
+
+  @Test
+  void acknowledgesARedeliveredEventWithoutApplyingItTwice() throws Exception {
+    Claim claim = claimSubmissionService.submit(command());
+    ClaimSummaryCompletedEnvelope event = event(claim.id());
+    Message message =
+        MessageBuilder.withBody(objectMapper.writeValueAsBytes(event))
+            .setContentType("application/json")
+            .setDeliveryMode(MessageDeliveryMode.PERSISTENT)
+            .setMessageId(event.eventId().toString())
+            .build();
+
+    rabbitTemplate.send(
+        RabbitTopology.CLAIMS_EVENTS_EXCHANGE,
+        RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY,
+        message);
+    rabbitTemplate.send(
+        RabbitTopology.CLAIMS_EVENTS_EXCHANGE,
+        RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY,
+        message);
+
+    await()
+        .atMost(Duration.ofSeconds(5))
+        .untilAsserted(
+            () -> {
+              assertThat(resultQueueMessageCount()).isZero();
+              assertThat(processedEventCount(event.eventId())).isEqualTo(1);
+              assertThat(claimSummaryRepository.findByClaimId(claim.id())).isPresent();
+            });
   }
 
   private long resultQueueMessageCount() {
@@ -162,6 +200,29 @@ class RabbitSummaryConsumptionIntegrationTest {
                 channel
                     .queueDeclarePassive(RabbitTopology.CLAIM_SUMMARY_RESULTS_QUEUE)
                     .getMessageCount());
+  }
+
+  private long deadLetterQueueMessageCount() {
+    return queueMessageCount(RabbitTopology.CLAIM_SUMMARY_RESULTS_DEAD_LETTER_QUEUE);
+  }
+
+  private long queueMessageCount(String queue) {
+    return rabbitTemplate.execute(
+        channel -> (long) channel.queueDeclarePassive(queue).getMessageCount());
+  }
+
+  private long processedEventCount(UUID eventId) {
+    return jdbcClient
+        .sql(
+            """
+            SELECT COUNT(*)
+            FROM processed_inbox_events
+            WHERE consumer_name = :consumerName AND event_id = :eventId
+            """)
+        .param("consumerName", "claim-summary-result-consumer")
+        .param("eventId", eventId)
+        .query(Long.class)
+        .single();
   }
 
   private ClaimSummaryCompletedEnvelope event(UUID claimId) {

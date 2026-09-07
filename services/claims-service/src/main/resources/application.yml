@@ -59,6 +59,12 @@ integration:
     confirm-timeout: 5s
   summary-consumer:
     enabled: ${SUMMARY_CONSUMER_ENABLED:true}
+    max-attempts: 3
+    retry-delay: 5s
+    confirm-timeout: 5s
+  dead-letter-replay:
+    enabled: ${DEAD_LETTER_REPLAY_ENABLED:false}
+    max-batch-size: 100
   policy:
     base-url: ${POLICY_SERVICE_BASE_URL:http://localhost:8082}
     connect-timeout: 1s
