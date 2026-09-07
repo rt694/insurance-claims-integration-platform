@@ -5,11 +5,13 @@ from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 CLAIM_SUBMITTED_EVENT_TYPE = "claim.submitted"
 CLAIM_SUBMITTED_EVENT_VERSION = 1
 CLAIM_AGGREGATE_TYPE = "claim"
+CLAIM_SUMMARY_COMPLETED_EVENT_TYPE = "claim.summary.completed"
+CLAIM_SUMMARY_COMPLETED_EVENT_VERSION = 1
 
 
 class EventContractError(ValueError):
@@ -17,7 +19,12 @@ class EventContractError(ValueError):
 
 
 class StrictContract(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+        str_strip_whitespace=True,
+    )
 
 
 class ClaimType(StrEnum):
@@ -92,6 +99,41 @@ class ClaimSummaryOutput(StrictContract):
     safety_flags: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
         alias="safetyFlags", max_length=20
     )
+
+
+class ClaimSummaryCompletedData(ClaimSummaryOutput):
+    generated_at: AwareDatetime = Field(alias="generatedAt")
+
+
+class ClaimSummaryCompletedEnvelope(StrictContract):
+    event_id: UUID = Field(alias="eventId")
+    event_type: str = Field(
+        default=CLAIM_SUMMARY_COMPLETED_EVENT_TYPE,
+        alias="eventType",
+    )
+    event_version: int = Field(
+        default=CLAIM_SUMMARY_COMPLETED_EVENT_VERSION,
+        alias="eventVersion",
+    )
+    aggregate_type: str = Field(default=CLAIM_AGGREGATE_TYPE, alias="aggregateType")
+    aggregate_id: UUID = Field(alias="aggregateId")
+    correlation_id: Annotated[str, Field(min_length=1, max_length=128)] = Field(
+        alias="correlationId"
+    )
+    occurred_at: AwareDatetime = Field(alias="occurredAt")
+    data: ClaimSummaryCompletedData
+
+    @model_validator(mode="after")
+    def validate_completed_contract(self) -> "ClaimSummaryCompletedEnvelope":
+        if (
+            self.event_type != CLAIM_SUMMARY_COMPLETED_EVENT_TYPE
+            or self.event_version != CLAIM_SUMMARY_COMPLETED_EVENT_VERSION
+            or self.aggregate_type != CLAIM_AGGREGATE_TYPE
+        ):
+            raise ValueError("unsupported claim summary event contract")
+        if self.aggregate_id != self.data.claim_id:
+            raise ValueError("aggregate ID does not match summary claim ID")
+        return self
 
 
 def decode_claim_submitted(body: bytes, max_event_bytes: int = 65_536) -> ClaimSubmittedEnvelope:

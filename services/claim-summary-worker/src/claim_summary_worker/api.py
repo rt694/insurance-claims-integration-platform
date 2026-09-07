@@ -13,7 +13,7 @@ class HealthResponse(TypedDict):
     service: str
 
 
-class ConsumerLifecycle(Protocol):
+class WorkerRuntimeLifecycle(Protocol):
     @property
     def is_ready(self) -> bool: ...
 
@@ -24,23 +24,23 @@ class ConsumerLifecycle(Protocol):
 
 def create_app(
     settings: WorkerSettings | None = None,
-    consumer: ConsumerLifecycle | None = None,
+    runtime: WorkerRuntimeLifecycle | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.policy_ready = bool(SYSTEM_PROMPT.strip())
-        consumer_started = False
-        if resolved_settings.rabbitmq_enabled and consumer is not None:
-            await consumer.start()
-            consumer_started = True
+        runtime_started = False
+        if resolved_settings.rabbitmq_enabled and runtime is not None:
+            await runtime.start()
+            runtime_started = True
         try:
             yield
         finally:
             app.state.policy_ready = False
-            if consumer is not None and consumer_started:
-                await consumer.close()
+            if runtime is not None and runtime_started:
+                await runtime.close()
 
     app = FastAPI(
         title="Claim Summary Worker",
@@ -50,7 +50,7 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.state.policy_ready = False
-    app.state.consumer = consumer
+    app.state.runtime = runtime
 
     @app.get("/health/live", tags=["health"])
     async def liveness(request: Request) -> HealthResponse:
@@ -60,9 +60,9 @@ def create_app(
     @app.get("/health/ready", tags=["health"])
     async def readiness(request: Request) -> HealthResponse:
         worker_settings: WorkerSettings = request.app.state.settings
-        configured_consumer: ConsumerLifecycle | None = request.app.state.consumer
+        configured_runtime: WorkerRuntimeLifecycle | None = request.app.state.runtime
         broker_ready = not worker_settings.rabbitmq_enabled or (
-            configured_consumer is not None and configured_consumer.is_ready
+            configured_runtime is not None and configured_runtime.is_ready
         )
         return {
             "status": "UP" if request.app.state.policy_ready and broker_ready else "DOWN",

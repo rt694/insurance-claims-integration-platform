@@ -13,7 +13,11 @@ from aio_pika.abc import (
 )
 
 from claim_summary_worker.config import WorkerSettings
-from claim_summary_worker.contracts import EventContractError, decode_claim_submitted
+from claim_summary_worker.contracts import (
+    ClaimSummaryCompletedEnvelope,
+    EventContractError,
+    decode_claim_submitted,
+)
 from claim_summary_worker.processing import ClaimEventHandler
 
 CLAIMS_EVENTS_EXCHANGE = "claims.events"
@@ -22,7 +26,9 @@ CLAIMS_DEAD_LETTER_EXCHANGE = "claims.dead-letter"
 CLAIM_SUMMARY_REQUESTS_QUEUE = "claim.summary.requests.v1"
 CLAIM_SUMMARY_REQUESTS_RETRY_QUEUE = "claim.summary.requests.retry.v1"
 CLAIM_SUMMARY_REQUESTS_DEAD_LETTER_QUEUE = "claim.summary.requests.dlq.v1"
+CLAIM_SUMMARY_RESULTS_QUEUE = "claim.summary.results.v1"
 CLAIM_SUBMITTED_ROUTING_KEY = "claim.submitted.v1"
+CLAIM_SUMMARY_COMPLETED_ROUTING_KEY = "claim.summary.completed.v1"
 
 RETRY_COUNT_HEADER = "retryCount"
 FAILURE_TYPE_HEADER = "failureType"
@@ -36,6 +42,97 @@ logger = logging.getLogger(__name__)
 
 class MessageRoutingError(RuntimeError):
     """Raised when RabbitMQ does not safely accept a routed failure message."""
+
+
+class ResultEventTooLargeError(ValueError):
+    """Raised before publishing a result the Java consumer would reject."""
+
+
+class RabbitMqResultPublisher:
+    """Publishes completed summaries with mandatory routing and broker confirms."""
+
+    def __init__(self, settings: WorkerSettings) -> None:
+        self._settings = settings
+        self._connection: AbstractRobustConnection | None = None
+        self._channel: AbstractChannel | None = None
+        self._exchange: AbstractExchange | None = None
+
+    @property
+    def is_ready(self) -> bool:
+        return bool(
+            self._exchange
+            and self._connection
+            and not self._connection.is_closed
+            and self._connection.connected.is_set()
+            and self._channel
+            and not self._channel.is_closed
+        )
+
+    async def start(self) -> None:
+        password = self._settings.rabbitmq_password
+        if password is None:
+            raise ValueError("RabbitMQ password is required")
+        self._connection = await aio_pika.connect_robust(
+            host=self._settings.rabbitmq_host,
+            port=self._settings.rabbitmq_port,
+            login=self._settings.rabbitmq_username,
+            password=password.get_secret_value(),
+            virtualhost=self._settings.rabbitmq_virtual_host,
+            timeout=self._settings.rabbitmq_connection_timeout_seconds,
+            client_properties={"connection_name": f"{self._settings.service_name}-publisher"},
+        )
+        try:
+            channel = await self._connection.channel(
+                publisher_confirms=True,
+                on_return_raises=True,
+            )
+            self._channel = channel
+            self._exchange = await channel.declare_exchange(
+                CLAIMS_EVENTS_EXCHANGE,
+                ExchangeType.TOPIC,
+                durable=True,
+                passive=True,
+            )
+        except BaseException:
+            await self.close()
+            raise
+
+    async def publish(self, event: ClaimSummaryCompletedEnvelope) -> None:
+        exchange = self._exchange
+        if exchange is None:
+            raise RuntimeError("RabbitMQ result publisher has not started")
+        body = event.model_dump_json(by_alias=True).encode()
+        if len(body) > self._settings.max_event_bytes:
+            raise ResultEventTooLargeError("claim summary event exceeds the size limit")
+
+        confirmation = await exchange.publish(
+            Message(
+                body=body,
+                headers={
+                    "eventType": event.event_type,
+                    "eventVersion": event.event_version,
+                    "aggregateType": event.aggregate_type,
+                    "aggregateId": str(event.aggregate_id),
+                },
+                content_type="application/json",
+                content_encoding="utf-8",
+                delivery_mode=DeliveryMode.PERSISTENT,
+                correlation_id=event.correlation_id,
+                message_id=str(event.event_id),
+                timestamp=event.occurred_at,
+                type=event.event_type,
+                app_id=self._settings.service_name,
+            ),
+            routing_key=CLAIM_SUMMARY_COMPLETED_ROUTING_KEY,
+            mandatory=True,
+        )
+        if confirmation is None:
+            raise MessageRoutingError("RabbitMQ did not confirm the summary event")
+
+    async def close(self) -> None:
+        self._exchange = None
+        if self._connection is not None and not self._connection.is_closed:
+            await self._connection.close()
 
 
 class RabbitMqConsumer:
