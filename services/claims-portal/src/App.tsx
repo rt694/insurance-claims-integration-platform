@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import { ClaimSubmissionForm } from './ClaimSubmissionForm'
 import {
   ApiProblem,
+  type Claim,
   type ClaimPage,
   type ClaimStatus,
   type ClaimType,
@@ -44,6 +46,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<ApiProblem | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [isSubmissionOpen, setIsSubmissionOpen] = useState(false)
+  const [createdClaim, setCreatedClaim] = useState<Claim | null>(null)
 
   function startRequest(updateQuery: () => void) {
     setIsLoading(true)
@@ -83,6 +87,17 @@ function App() {
   const hasFilters = Boolean(status || claimType)
   const claims = claimPage?.content ?? []
 
+  function claimCreated(claim: Claim) {
+    setCreatedClaim(claim)
+    setIsSubmissionOpen(false)
+    startRequest(() => {
+      setStatus('')
+      setClaimType('')
+      setPage(0)
+      setReloadKey((key) => key + 1)
+    })
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -115,19 +130,49 @@ function App() {
           </div>
         </section>
 
+        {isSubmissionOpen && (
+          <ClaimSubmissionForm
+            onCancel={() => setIsSubmissionOpen(false)}
+            onCreated={claimCreated}
+          />
+        )}
+
+        {createdClaim && (
+          <div className="success-banner" role="status">
+            <div>
+              <strong>Claim submitted</strong>
+              <p>{createdClaim.externalReference} was created with status Submitted.</p>
+            </div>
+            <button type="button" onClick={() => setCreatedClaim(null)}>Dismiss</button>
+          </div>
+        )}
+
         <section className="workspace" aria-labelledby="workspace-title">
           <div className="workspace-header">
             <div>
               <p className="section-kicker">Claim inventory</p>
               <h2 id="workspace-title">Submitted claims</h2>
             </div>
-            <button
-              className="refresh-button"
-              type="button"
-              onClick={() => startRequest(() => setReloadKey((key) => key + 1))}
-            >
-              Refresh data
-            </button>
+            <div className="workspace-actions">
+              <button
+                type="button"
+                aria-expanded={isSubmissionOpen}
+                disabled={isSubmissionOpen}
+                onClick={() => {
+                  setCreatedClaim(null)
+                  setIsSubmissionOpen(true)
+                }}
+              >
+                New claim
+              </button>
+              <button
+                className="refresh-button"
+                type="button"
+                onClick={() => startRequest(() => setReloadKey((key) => key + 1))}
+              >
+                Refresh data
+              </button>
+            </div>
           </div>
 
           <form className="filters" onSubmit={(event) => event.preventDefault()}>

@@ -33,6 +33,16 @@ export interface ClaimPage {
   totalPages: number
 }
 
+export interface CreateClaimInput {
+  externalReference: string
+  policyNumber: string
+  claimantName: string
+  claimType: ClaimType
+  incidentDate: string
+  description: string
+  estimatedLoss: number
+}
+
 interface ClaimFilters {
   page: number
   size: number
@@ -45,12 +55,14 @@ interface ProblemDetails {
   status?: number
   detail?: string
   correlationId?: string
+  errors?: Record<string, string>
 }
 
 export class ApiProblem extends Error {
   readonly status?: number
   readonly type?: string
   readonly correlationId?: string
+  readonly fieldErrors: Record<string, string>
 
   constructor(message: string, problem?: ProblemDetails) {
     super(message)
@@ -58,6 +70,7 @@ export class ApiProblem extends Error {
     this.status = problem?.status
     this.type = problem?.type
     this.correlationId = problem?.correlationId
+    this.fieldErrors = problem?.errors ?? {}
   }
 }
 
@@ -94,8 +107,29 @@ function isClaimPage(value: unknown): value is ClaimPage {
   )
 }
 
-function isProblemDetails(value: unknown): value is ProblemDetails {
-  return isObject(value)
+function stringProperty(value: Record<string, unknown>, key: string): string | undefined {
+  return typeof value[key] === 'string' ? value[key] : undefined
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isObject(value)) return undefined
+  const strings: Record<string, string> = {}
+  for (const [field, message] of Object.entries(value)) {
+    if (typeof message !== 'string') return undefined
+    strings[field] = message
+  }
+  return strings
+}
+
+function problemDetails(value: unknown): ProblemDetails | undefined {
+  if (!isObject(value)) return undefined
+  return {
+    type: stringProperty(value, 'type'),
+    status: typeof value.status === 'number' ? value.status : undefined,
+    detail: stringProperty(value, 'detail'),
+    correlationId: stringProperty(value, 'correlationId'),
+    errors: stringRecord(value.errors),
+  }
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -128,10 +162,32 @@ export async function listClaims(filters: ClaimFilters, signal?: AbortSignal): P
   const body = await readJson(response)
 
   if (!response.ok) {
-    const problem = isProblemDetails(body) ? body : undefined
+    const problem = problemDetails(body)
     throw new ApiProblem(problem?.detail ?? `The claims service returned ${response.status}.`, problem)
   }
   if (!isClaimPage(body)) {
+    throw new ApiProblem('The claims service returned an unexpected response.')
+  }
+  return body
+}
+
+export async function createClaim(input: CreateClaimInput): Promise<Claim> {
+  const response = await fetch('/api/v1/claims', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Correlation-ID': correlationId(),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = await readJson(response)
+
+  if (!response.ok) {
+    const problem = problemDetails(body)
+    throw new ApiProblem(problem?.detail ?? `The claims service returned ${response.status}.`, problem)
+  }
+  if (!isClaim(body)) {
     throw new ApiProblem('The claims service returned an unexpected response.')
   }
   return body
