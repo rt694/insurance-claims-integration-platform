@@ -6,7 +6,8 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current edition
 
-This edition includes two Spring Boot services and a locally runnable Python worker.
+This edition includes two Spring Boot services, a locally runnable Python worker,
+and the first React claims-portal story.
 The claims service owns claim intake,
 lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
 calls a synthetic policy service to confirm that the policy is active, covers the
@@ -24,6 +25,8 @@ an optional schema-validated OpenAI provider, and confirmed
 `claim.summary.completed.v1` publication. It uses manual acknowledgements, bounded
 delayed retries, dead-letter routing, stable event IDs for redelivery, and broker-aware
 readiness. The mock remains the default, so local development never requires an API key.
+The React portal provides a typed, responsive claim inventory with server-side status
+and claim-type filters, pagination, correlation IDs, and Problem Details handling.
 
 ## Claim lifecycle
 
@@ -48,12 +51,12 @@ services/
   claims-service/    Spring Boot REST API and claims orchestration
   policy-service/    Synthetic policy lookup and validation API
   claim-summary-worker/  Python/FastAPI reviewer-assistance worker
+  claims-portal/     React/TypeScript human-review workspace
 ```
 
 The policy service is deliberately separate: this makes the network boundary,
 failure handling, and service contract visible instead of hiding policy rules inside
-the claims application. Additional services, the Python worker, and the React portal
-will be added when those versions are pushed.
+the claims application.
 
 ## Prerequisites
 
@@ -95,6 +98,20 @@ cd services/claim-summary-worker
 
 The `.python-version` file makes `uv` select Python 3.12, and `uv.lock` pins the
 complete dependency graph so local development and CI use the same package versions.
+
+Build and test the React portal:
+
+```bash
+cd services/claims-portal
+pnpm install
+pnpm lint
+pnpm test
+pnpm build
+```
+
+Run `pnpm dev` and open `http://localhost:5173` after starting the claims service.
+Vite proxies `/api` requests to `http://localhost:8080`, so the frontend uses the same
+relative API paths it can use behind a single production gateway later.
 
 ## Python worker processing pipeline
 
