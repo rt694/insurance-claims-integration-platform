@@ -35,7 +35,8 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(
     properties = {
       "CLAIMS_DB_PASSWORD=test-only-placeholder",
-      "integration.outbox.publisher-enabled=false"
+      "integration.outbox.publisher-enabled=false",
+      "integration.summary-consumer.enabled=false"
     })
 @Testcontainers
 class RabbitOutboxPublicationIntegrationTest {

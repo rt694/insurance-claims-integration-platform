@@ -24,6 +24,9 @@ spring:
     publisher-returns: true
     template:
       mandatory: true
+    listener:
+      simple:
+        prefetch: 10
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
@@ -54,6 +57,8 @@ integration:
     lease-duration: 15s
     retry-delay: 5s
     confirm-timeout: 5s
+  summary-consumer:
+    enabled: ${SUMMARY_CONSUMER_ENABLED:true}
   policy:
     base-url: ${POLICY_SERVICE_BASE_URL:http://localhost:8082}
     connect-timeout: 1s

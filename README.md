@@ -12,7 +12,9 @@ calls a synthetic policy service to confirm that the policy is active, covers th
 incident date, and covers the requested claim type. Accepted submissions also create
 a pending, versioned integration event through a transactional outbox. A scheduled
 publisher safely claims those events and publishes them to RabbitMQ with routing and
-publisher-confirm checks before recording them as published.
+publisher-confirm checks before recording them as published. The claims service can
+also consume a versioned synthetic summary result, validate and store it, and expose
+that reviewer-assistance data without changing the claim's lifecycle status.
 
 ## Claim lifecycle
 
@@ -248,6 +250,8 @@ The RabbitMQ contract is deliberately explicit:
 | Durable topic exchange | `claims.events` | Receives versioned claims integration events |
 | Routing key | `claim.submitted.v1` | Identifies the event type and contract version |
 | Durable queue | `claim.summary.requests.v1` | Holds work for the future summary consumer |
+| Routing key | `claim.summary.completed.v1` | Identifies a completed summary contract |
+| Durable queue | `claim.summary.results.v1` | Holds summary results for the claims service |
 
 Messages are persistent and carry the event ID as the AMQP message ID, the request
 correlation ID, event type and version, and aggregate metadata. The body is the exact
@@ -285,6 +289,88 @@ docker compose exec rabbitmq rabbitmqctl list_queues \
 
 Duplicate or rejected claims do not produce outbox events. If event insertion fails,
 the claim and history insert are rolled back with it.
+
+## RabbitMQ summary-result consumption
+
+The claims service listens to `claim.summary.results.v1` with manual acknowledgments.
+Each result must use the `claim.summary.completed` event type and version `1`. The
+envelope aggregate ID must match the payload claim ID, and all required summary
+fields must pass schema validation before the application service is called.
+
+The processing order is important:
+
+```mermaid
+flowchart LR
+    Q["summary-result queue"] --> D["decode and validate"]
+    D --> T["database transaction"]
+    T --> S["claim_summaries row"]
+    S --> A["manual RabbitMQ ACK"]
+    D -->|"invalid contract"| R["reject without requeue"]
+    T -->|"temporary failure"| N["NACK and requeue"]
+```
+
+The acknowledgment happens only after the transactional service returns, so a
+database failure cannot silently discard the message. The table stores the source
+event ID, generated and received timestamps, summary text, missing-information list,
+recommended human-review queue, and safety flags. A newer generated result can
+replace an older one; an older late-arriving result cannot overwrite newer data.
+
+The supported review queues are `STANDARD_REVIEW`, `COMPLEX_REVIEW`, and
+`SPECIALIST_REVIEW`. These are routing suggestions for people, not claim decisions.
+The consumer never approves, denies, prices, or determines coverage for a claim.
+
+Until the Python worker is added, simulate its completed event through RabbitMQ's
+local management API. Set `CLAIM_ID` to the ID returned by claim submission:
+
+```bash
+CLAIM_ID="replace-with-the-created-claim-id"
+EVENT_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+summary_event="$(jq -nc \
+  --arg eventId "$EVENT_ID" \
+  --arg claimId "$CLAIM_ID" \
+  --arg occurredAt "$GENERATED_AT" \
+  '{
+    eventId: $eventId,
+    eventType: "claim.summary.completed",
+    eventVersion: 1,
+    aggregateType: "claim",
+    aggregateId: $claimId,
+    correlationId: "local-summary-demo-1001",
+    occurredAt: $occurredAt,
+    data: {
+      claimId: $claimId,
+      summary: "Synthetic vehicle damage requires human review.",
+      missingInformation: ["Police report"],
+      recommendedHumanReviewQueue: "STANDARD_REVIEW",
+      safetyFlags: [],
+      generatedAt: $occurredAt
+    }
+  }')"
+
+jq -nc --arg payload "$summary_event" '{
+  properties: {delivery_mode: 2},
+  routing_key: "claim.summary.completed.v1",
+  payload: $payload,
+  payload_encoding: "string"
+}' | curl --fail --silent --show-error \
+  --user "$RABBITMQ_USERNAME:$RABBITMQ_PASSWORD" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- \
+  http://localhost:15672/api/exchanges/%2F/claims.events/publish
+```
+
+The management API responds with `{"routed":true}`. Then retrieve the stored result:
+
+```bash
+curl --silent "http://localhost:8080/api/v1/claims/$CLAIM_ID/summary"
+```
+
+An existing claim without a result returns a `404` Problem Details response with
+type `urn:problem:claim-summary-not-found`. At this milestone, invalid messages are
+rejected and temporary failures are requeued. Bounded retries, dead-letter storage,
+idempotency records, and controlled replay are the next reliability story.
 
 ## Retrieve and browse claims
 

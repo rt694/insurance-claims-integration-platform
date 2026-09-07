@@ -33,11 +33,24 @@ public class RabbitMqConfiguration {
   }
 
   @Bean
+  Queue claimSummaryResultsQueue() {
+    return QueueBuilder.durable(RabbitTopology.CLAIM_SUMMARY_RESULTS_QUEUE).build();
+  }
+
+  @Bean
   Binding claimSubmittedBinding(
       TopicExchange claimsEventsExchange, Queue claimSummaryRequestsQueue) {
     return BindingBuilder.bind(claimSummaryRequestsQueue)
         .to(claimsEventsExchange)
         .with(RabbitTopology.CLAIM_SUBMITTED_ROUTING_KEY);
+  }
+
+  @Bean
+  Binding claimSummaryCompletedBinding(
+      TopicExchange claimsEventsExchange, Queue claimSummaryResultsQueue) {
+    return BindingBuilder.bind(claimSummaryResultsQueue)
+        .to(claimsEventsExchange)
+        .with(RabbitTopology.CLAIM_SUMMARY_COMPLETED_ROUTING_KEY);
   }
 
   @Bean

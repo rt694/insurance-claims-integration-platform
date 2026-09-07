@@ -1,6 +1,7 @@
 package com.rohantummala.insurance.claims.api;
 
 import com.rohantummala.insurance.claims.application.exception.ClaimNotFoundException;
+import com.rohantummala.insurance.claims.application.exception.ClaimSummaryNotFoundException;
 import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.exception.InvalidClaimQueryException;
 import com.rohantummala.insurance.claims.application.exception.InvalidPolicyServiceResponseException;
@@ -73,6 +74,17 @@ public class ApiExceptionHandler {
         "Claim not found",
         exception.getMessage(),
         "urn:problem:claim-not-found",
+        request);
+  }
+
+  @ExceptionHandler(ClaimSummaryNotFoundException.class)
+  ProblemDetail handleSummaryNotFound(
+      ClaimSummaryNotFoundException exception, HttpServletRequest request) {
+    return baseProblem(
+        HttpStatus.NOT_FOUND,
+        "Claim summary not available",
+        exception.getMessage(),
+        "urn:problem:claim-summary-not-found",
         request);
   }
 

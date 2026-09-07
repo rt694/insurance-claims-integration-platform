@@ -4,6 +4,7 @@ import com.rohantummala.insurance.claims.application.query.ClaimQuery;
 import com.rohantummala.insurance.claims.application.service.ClaimQueryService;
 import com.rohantummala.insurance.claims.application.service.ClaimStatusService;
 import com.rohantummala.insurance.claims.application.service.ClaimSubmissionService;
+import com.rohantummala.insurance.claims.application.service.ClaimSummaryService;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatus;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
@@ -31,14 +32,17 @@ public class ClaimController {
   private final ClaimSubmissionService claimSubmissionService;
   private final ClaimQueryService claimQueryService;
   private final ClaimStatusService claimStatusService;
+  private final ClaimSummaryService claimSummaryService;
 
   public ClaimController(
       ClaimSubmissionService claimSubmissionService,
       ClaimQueryService claimQueryService,
-      ClaimStatusService claimStatusService) {
+      ClaimStatusService claimStatusService,
+      ClaimSummaryService claimSummaryService) {
     this.claimSubmissionService = claimSubmissionService;
     this.claimQueryService = claimQueryService;
     this.claimStatusService = claimStatusService;
+    this.claimSummaryService = claimSummaryService;
   }
 
   @PostMapping
@@ -106,5 +110,15 @@ public class ClaimController {
     return claimStatusService.getHistory(id).stream()
         .map(ClaimStatusHistoryResponse::from)
         .toList();
+  }
+
+  @GetMapping("/{id}/summary")
+  @Operation(summary = "Get a claim's generated reviewer-assistance summary")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Claim summary returned"),
+    @ApiResponse(responseCode = "404", description = "Claim or claim summary not found")
+  })
+  ClaimSummaryResponse getSummary(@PathVariable UUID id) {
+    return ClaimSummaryResponse.from(claimSummaryService.getByClaimId(id));
   }
 }
