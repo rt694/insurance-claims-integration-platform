@@ -6,7 +6,8 @@ A production-style learning project for submitting and processing synthetic insu
 
 ## Current edition
 
-This edition includes two Spring Boot services. The claims service owns claim intake,
+This edition includes two Spring Boot services and the foundation of a Python worker.
+The claims service owns claim intake,
 lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
 calls a synthetic policy service to confirm that the policy is active, covers the
 incident date, and covers the requested claim type. Accepted submissions also create
@@ -17,6 +18,10 @@ also consume a versioned synthetic summary result, validate and store it, and ex
 that reviewer-assistance data without changing the claim's lifecycle status. Summary
 consumption now includes delayed bounded retries, durable dead-letter storage,
 transactional duplicate detection, and a disabled-by-default replay operation.
+The FastAPI worker foundation defines the strict `claim.submitted.v1` input contract,
+the future model-output schema, the fixed reviewer-assistance safety policy, and
+liveness/readiness endpoints. RabbitMQ processing and model providers are the next
+worker stories.
 
 ## Claim lifecycle
 
@@ -40,6 +45,7 @@ stateDiagram-v2
 services/
   claims-service/    Spring Boot REST API and claims orchestration
   policy-service/    Synthetic policy lookup and validation API
+  claim-summary-worker/  Python/FastAPI reviewer-assistance worker
 ```
 
 The policy service is deliberately separate: this makes the network boundary,
@@ -52,7 +58,7 @@ will be added only when their milestones begin.
 - Java 17
 - Docker Desktop with Docker Compose
 - Node.js 24 LTS (for the later frontend milestone)
-- Python 3.12 and uv (for the later worker milestone)
+- Python 3.12 and uv
 
 Maven does not need to be installed globally. The claims service includes Maven Wrapper, which downloads and uses the project's configured Maven version.
 
@@ -73,6 +79,47 @@ The policy service reuses the repository's Maven Wrapper executable while keepin
 its own independent `pom.xml`. The tests cover domain rules, both HTTP APIs,
 PostgreSQL persistence, the policy HTTP contract, correlation-ID propagation,
 retry behavior, malformed upstream responses, and the circuit breaker.
+
+Build and test the Python worker from the repository root:
+
+```bash
+cd services/claim-summary-worker
+~/.local/bin/uv sync
+~/.local/bin/uv run ruff check .
+~/.local/bin/uv run ruff format --check .
+~/.local/bin/uv run mypy
+~/.local/bin/uv run pytest
+```
+
+The `.python-version` file makes `uv` select Python 3.12, and `uv.lock` pins the
+complete dependency graph so local development and CI use the same package versions.
+
+## Python worker foundation
+
+The worker rejects unsupported event types and versions, mismatched aggregate and
+claim IDs, unknown fields, invalid enum values, and event bodies over 64 KB. Its
+model-facing input is an explicit allowlist containing only claim ID, type, incident
+date, description, and estimated loss. Claimant name and policy number never cross
+this boundary.
+
+Claim descriptions are untrusted. They are passed as structured data and never
+concatenated into the fixed system prompt, so text such as “ignore the rules” cannot
+replace the worker's safety instructions. The strict output schema permits summaries,
+missing-information lists, human-review queues, and safety flags—but no approval,
+denial, pricing, or coverage decision.
+
+Run the foundation API locally:
+
+```bash
+cd services/claim-summary-worker
+~/.local/bin/uv run uvicorn claim_summary_worker.main:app --app-dir src --reload --port 8083
+```
+
+Check `http://localhost:8083/health/live` and
+`http://localhost:8083/health/ready`. Interactive OpenAPI documentation is available
+at `http://localhost:8083/docs`. Readiness currently proves that configuration and
+the fixed safety policy loaded; the RabbitMQ worker story will extend it to broker
+connectivity and consumer state.
 
 ## Run and manually verify both services
 
