@@ -117,7 +117,7 @@ class JpaClaimRepositoryAdapterTest {
             .query(Integer.class)
             .single();
 
-    assertThat(migrationCount).isEqualTo(2);
+    assertThat(migrationCount).isEqualTo(3);
   }
 
   @Test
@@ -147,6 +147,34 @@ class JpaClaimRepositoryAdapterTest {
             .query(Long.class)
             .single();
     assertThat(version).isEqualTo(1);
+
+    Integer outboxCount =
+        jdbcClient
+            .sql(
+                """
+                SELECT COUNT(*) FROM outbox_events
+                WHERE aggregate_id = :claimId
+                  AND event_type = 'claim.submitted'
+                  AND event_version = 1
+                  AND status = 'PENDING'
+                  AND attempt_count = 0
+                """)
+            .param("claimId", submitted.id())
+            .query(Integer.class)
+            .single();
+    assertThat(outboxCount).isEqualTo(1);
+
+    String payloadClaimId =
+        jdbcClient
+            .sql(
+                """
+                SELECT payload #>> '{data,claimId}' FROM outbox_events
+                WHERE aggregate_id = :claimId
+                """)
+            .param("claimId", submitted.id())
+            .query(String.class)
+            .single();
+    assertThat(payloadClaimId).isEqualTo(submitted.id().toString());
   }
 
   private Claim claim(String reference, ClaimType claimType, String createdAt) {

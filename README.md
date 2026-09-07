@@ -9,7 +9,8 @@ A production-style learning project for submitting and processing synthetic insu
 This edition includes two Spring Boot services. The claims service owns claim intake,
 lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
 calls a synthetic policy service to confirm that the policy is active, covers the
-incident date, and covers the requested claim type.
+incident date, and covers the requested claim type. Accepted submissions also create
+a pending, versioned integration event through a transactional outbox.
 
 ## Claim lifecycle
 
@@ -192,6 +193,46 @@ Claims are stored in PostgreSQL and remain available after the claims-service or
 database container restarts. Flyway applies versioned schema migrations at startup,
 while Hibernate validates that the JPA mapping still agrees with the migrated
 schema. PostgreSQL also enforces case-insensitive external-reference uniqueness.
+
+## Transactional outbox
+
+An accepted submission stores the claim, its initial audit-history row, and one
+`claim.submitted` event in the same PostgreSQL transaction:
+
+```mermaid
+flowchart LR
+    A["Accepted claim"] --> T["One database transaction"]
+    T --> C["claims row"]
+    T --> H["status-history row"]
+    T --> O["outbox event: PENDING"]
+    O -. "next milestone" .-> R["RabbitMQ publisher"]
+```
+
+This solves the dual-write problem. If the application stored a claim and then sent
+directly to RabbitMQ, a crash between those operations could leave a claim with no
+event. The outbox makes PostgreSQL the single atomic boundary. A later publisher can
+repeatedly scan durable pending rows until RabbitMQ confirms delivery.
+
+Each outbox row has a unique event ID, `claim.submitted` event type, version `1`,
+claim aggregate ID, correlation ID, occurrence time, JSON payload, delivery status,
+attempt count, and retry timestamps. The payload contains only the fields the future
+summary worker needs. It omits claimant name and policy number to demonstrate data
+minimization across service boundaries.
+
+After submitting the example claim, inspect its pending event from the repository
+root:
+
+```bash
+docker compose exec postgres psql \
+  --username "$CLAIMS_DB_USERNAME" \
+  --dbname "$CLAIMS_DB_NAME" \
+  --command "SELECT event_type, event_version, status, attempt_count, aggregate_id FROM outbox_events;"
+```
+
+At this milestone, `PENDING` is the expected status: RabbitMQ publication is
+intentionally implemented in the next bounded story. Duplicate or rejected claims
+do not produce outbox events. If event insertion fails, the claim and history insert
+are rolled back with it.
 
 ## Retrieve and browse claims
 
