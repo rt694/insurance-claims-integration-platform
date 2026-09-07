@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
 import com.rohantummala.insurance.claims.application.policy.PolicyValidationResult;
 import com.rohantummala.insurance.claims.application.port.ClaimRepository;
+import com.rohantummala.insurance.claims.application.port.ClaimSummaryRepository;
 import com.rohantummala.insurance.claims.application.port.PolicyValidationPort;
 import com.rohantummala.insurance.claims.application.query.ClaimPage;
 import com.rohantummala.insurance.claims.application.query.ClaimQuery;
@@ -15,10 +16,13 @@ import com.rohantummala.insurance.claims.application.service.ClaimStatusService;
 import com.rohantummala.insurance.claims.application.service.ClaimSubmissionService;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimStatus;
+import com.rohantummala.insurance.claims.domain.model.ClaimSummary;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
+import com.rohantummala.insurance.claims.domain.model.HumanReviewQueue;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +40,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(
     properties = {
       "CLAIMS_DB_PASSWORD=test-only-placeholder",
-      "integration.outbox.publisher-enabled=false"
+      "integration.outbox.publisher-enabled=false",
+      "integration.summary-consumer.enabled=false"
     })
 @Testcontainers
 @Transactional
@@ -46,6 +51,8 @@ class JpaClaimRepositoryAdapterTest {
   static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17.6-alpine");
 
   @Autowired private ClaimRepository claimRepository;
+
+  @Autowired private ClaimSummaryRepository claimSummaryRepository;
 
   @Autowired private JdbcClient jdbcClient;
 
@@ -121,7 +128,7 @@ class JpaClaimRepositoryAdapterTest {
             .query(Integer.class)
             .single();
 
-    assertThat(migrationCount).isEqualTo(4);
+    assertThat(migrationCount).isEqualTo(5);
   }
 
   @Test
@@ -181,6 +188,29 @@ class JpaClaimRepositoryAdapterTest {
     assertThat(payloadClaimId).isEqualTo(submitted.id().toString());
   }
 
+  @Test
+  void aLateOlderSummaryCannotOverwriteANewerGeneratedSummary() {
+    Claim claim = claim("EXT-DB-SUMMARY", ClaimType.AUTO, "2026-01-15T10:00:00Z");
+    assertThat(claimRepository.saveIfAbsent(claim)).isTrue();
+    ClaimSummary newer =
+        summary(
+            claim.id(),
+            "Newer reviewer-assistance summary",
+            "2026-01-15T12:00:00Z",
+            "2026-01-15T12:00:01Z");
+    ClaimSummary lateOlder =
+        summary(
+            claim.id(),
+            "Older late-arriving summary",
+            "2026-01-15T11:00:00Z",
+            "2026-01-15T13:00:00Z");
+
+    claimSummaryRepository.save(newer);
+    claimSummaryRepository.save(lateOlder);
+
+    assertThat(claimSummaryRepository.findByClaimId(claim.id())).contains(newer);
+  }
+
   private Claim claim(String reference, ClaimType claimType, String createdAt) {
     Instant timestamp = Instant.parse(createdAt);
     return Claim.submitted(
@@ -193,5 +223,17 @@ class JpaClaimRepositoryAdapterTest {
         "Synthetic incident description",
         new BigDecimal("1250.00"),
         timestamp);
+  }
+
+  private ClaimSummary summary(UUID claimId, String text, String generatedAt, String receivedAt) {
+    return new ClaimSummary(
+        claimId,
+        UUID.randomUUID(),
+        text,
+        List.of("Police report"),
+        HumanReviewQueue.STANDARD_REVIEW,
+        List.of(),
+        Instant.parse(generatedAt),
+        Instant.parse(receivedAt));
   }
 }
