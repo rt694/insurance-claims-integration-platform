@@ -9,6 +9,7 @@ import {
 } from './api/claims'
 
 interface ClaimSubmissionFormProps {
+  accessToken: string
   onCancel: () => void
   onCreated: (claim: Claim) => void
 }
@@ -113,7 +114,7 @@ function formErrorsFrom(fieldErrors: Record<string, string>): FormErrors {
   )
 }
 
-export function ClaimSubmissionForm({ onCancel, onCreated }: ClaimSubmissionFormProps) {
+export function ClaimSubmissionForm({ accessToken, onCancel, onCreated }: ClaimSubmissionFormProps) {
   const [values, setValues] = useState(initialValues)
   const [errors, setErrors] = useState<FormErrors>({})
   const [problem, setProblem] = useState<ApiProblem | null>(null)
@@ -136,7 +137,7 @@ export function ClaimSubmissionForm({ onCancel, onCreated }: ClaimSubmissionForm
     setIsSubmitting(true)
     setProblem(null)
     try {
-      const claim = await createClaim(inputFrom(values))
+      const claim = await createClaim(inputFrom(values), accessToken)
       onCreated(claim)
     } catch (reason) {
       const apiProblem =

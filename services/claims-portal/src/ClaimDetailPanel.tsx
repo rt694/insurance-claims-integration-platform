@@ -12,6 +12,8 @@ import {
 } from './api/claims'
 
 interface ClaimDetailPanelProps {
+  accessToken: string
+  canUpdateStatus: boolean
   claimId: string
   onClose: () => void
   onClaimUpdated: (claim: Claim) => void
@@ -59,7 +61,13 @@ function isPendingSummary(problem: ApiProblem | null) {
   return problem?.status === 404 && problem.type === 'urn:problem:claim-summary-not-found'
 }
 
-export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDetailPanelProps) {
+export function ClaimDetailPanel({
+  accessToken,
+  canUpdateStatus,
+  claimId,
+  onClose,
+  onClaimUpdated,
+}: ClaimDetailPanelProps) {
   const [claim, setClaim] = useState<Claim | null>(null)
   const [claimProblem, setClaimProblem] = useState<ApiProblem | null>(null)
   const [isClaimLoading, setIsClaimLoading] = useState(true)
@@ -80,7 +88,7 @@ export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDeta
   useEffect(() => {
     const controller = new AbortController()
 
-    getClaim(claimId, controller.signal)
+    getClaim(claimId, accessToken, controller.signal)
       .then(setClaim)
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -92,12 +100,12 @@ export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDeta
       })
 
     return () => controller.abort()
-  }, [claimId, claimReloadKey])
+  }, [accessToken, claimId, claimReloadKey])
 
   useEffect(() => {
     const controller = new AbortController()
 
-    getClaimSummary(claimId, controller.signal)
+    getClaimSummary(claimId, accessToken, controller.signal)
       .then(setSummary)
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -109,12 +117,12 @@ export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDeta
       })
 
     return () => controller.abort()
-  }, [claimId, summaryReloadKey])
+  }, [accessToken, claimId, summaryReloadKey])
 
   useEffect(() => {
     const controller = new AbortController()
 
-    getClaimHistory(claimId, controller.signal)
+    getClaimHistory(claimId, accessToken, controller.signal)
       .then(setHistory)
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -126,7 +134,7 @@ export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDeta
       })
 
     return () => controller.abort()
-  }, [claimId, historyReloadKey])
+  }, [accessToken, claimId, historyReloadKey])
 
   function reloadClaim() {
     setClaim(null)
@@ -157,7 +165,7 @@ export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDeta
     setTransitionProblem(null)
     setTransitionMessage('')
     try {
-      const updatedClaim = await updateClaimStatus(claim.id, nextStatus)
+      const updatedClaim = await updateClaimStatus(claim.id, nextStatus, accessToken)
       setClaim(updatedClaim)
       setNextStatus('')
       setTransitionMessage(`Status updated to ${displayLabel(updatedClaim.status)}.`)
@@ -223,53 +231,62 @@ export function ClaimDetailPanel({ claimId, onClose, onClaimUpdated }: ClaimDeta
                 <h4>Incident description</h4>
                 <p>{claim.description}</p>
               </div>
-              <div className="status-workflow">
-                <div>
-                  <h4>Update claim status</h4>
-                  <p>Status changes are permanent and recorded in the claim history.</p>
-                </div>
-                {allowedTransitions[claim.status].length > 0 ? (
-                  <form onSubmit={transitionStatus}>
-                    <label htmlFor="nextStatus">Next status</label>
-                    <div>
-                      <select
-                        id="nextStatus"
-                        value={nextStatus}
-                        disabled={isTransitioning}
-                        onChange={(event) => {
-                          setNextStatus(event.target.value as ClaimStatus | '')
-                          setTransitionProblem(null)
-                          setTransitionMessage('')
-                        }}
-                      >
-                        <option value="">Select an allowed status</option>
-                        {allowedTransitions[claim.status].map((status) => (
-                          <option key={status} value={status}>{displayLabel(status)}</option>
-                        ))}
-                      </select>
-                      <button
-                        className="primary-button"
-                        type="submit"
-                        disabled={!nextStatus || isTransitioning}
-                      >
-                        {isTransitioning ? 'Updating…' : 'Update status'}
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <p className="terminal-status">This claim is in a terminal status.</p>
-                )}
-                {transitionMessage && <p className="transition-success" role="status">{transitionMessage}</p>}
-                {transitionProblem && (
-                  <div className="transition-error" role="alert">
-                    <strong>Status not changed</strong>
-                    <p>{transitionProblem.message}</p>
-                    {transitionProblem.correlationId && (
-                      <small>Reference: {transitionProblem.correlationId}</small>
-                    )}
+              {canUpdateStatus ? (
+                <div className="status-workflow">
+                  <div>
+                    <h4>Update claim status</h4>
+                    <p>Status changes are permanent and recorded in the claim history.</p>
                   </div>
-                )}
-              </div>
+                  {allowedTransitions[claim.status].length > 0 ? (
+                    <form onSubmit={transitionStatus}>
+                      <label htmlFor="nextStatus">Next status</label>
+                      <div>
+                        <select
+                          id="nextStatus"
+                          value={nextStatus}
+                          disabled={isTransitioning}
+                          onChange={(event) => {
+                            setNextStatus(event.target.value as ClaimStatus | '')
+                            setTransitionProblem(null)
+                            setTransitionMessage('')
+                          }}
+                        >
+                          <option value="">Select an allowed status</option>
+                          {allowedTransitions[claim.status].map((status) => (
+                            <option key={status} value={status}>{displayLabel(status)}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="primary-button"
+                          type="submit"
+                          disabled={!nextStatus || isTransitioning}
+                        >
+                          {isTransitioning ? 'Updating…' : 'Update status'}
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <p className="terminal-status">This claim is in a terminal status.</p>
+                  )}
+                  {transitionMessage && (
+                    <p className="transition-success" role="status">{transitionMessage}</p>
+                  )}
+                  {transitionProblem && (
+                    <div className="transition-error" role="alert">
+                      <strong>Status not changed</strong>
+                      <p>{transitionProblem.message}</p>
+                      {transitionProblem.correlationId && (
+                        <small>Reference: {transitionProblem.correlationId}</small>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="status-workflow view-only-workflow">
+                  <h4>View-only status access</h4>
+                  <p>Your assigned role can inspect this claim but cannot change its status.</p>
+                </div>
+              )}
               <div className="history-section">
                 <h4>Claim history</h4>
                 <div aria-live="polite" aria-busy={isHistoryLoading}>

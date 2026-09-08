@@ -39,7 +39,14 @@ function displayLabel(value: string) {
     .join(' ')
 }
 
-function App() {
+interface AppProps {
+  accessToken: string
+  currentUser: string
+  roles: string[]
+  onSignOut: () => void
+}
+
+function App({ accessToken, currentUser, roles, onSignOut }: AppProps) {
   const [claimPage, setClaimPage] = useState<ClaimPage | null>(null)
   const [page, setPage] = useState(0)
   const [status, setStatus] = useState<ClaimStatus | ''>('')
@@ -67,6 +74,7 @@ function App() {
         status: status || undefined,
         claimType: claimType || undefined,
       },
+      accessToken,
       controller.signal,
     )
       .then(setClaimPage)
@@ -84,10 +92,12 @@ function App() {
       })
 
     return () => controller.abort()
-  }, [claimType, page, reloadKey, status])
+  }, [accessToken, claimType, page, reloadKey, status])
 
   const hasFilters = Boolean(status || claimType)
   const claims = claimPage?.content ?? []
+  const canSubmitClaims = roles.includes('AGENT') || roles.includes('ADMIN')
+  const canUpdateStatus = roles.includes('REVIEWER') || roles.includes('ADMIN')
 
   function claimCreated(claim: Claim) {
     setCreatedClaim(claim)
@@ -111,8 +121,17 @@ function App() {
             <small>Operations workspace</small>
           </span>
         </a>
-        <div className="environment-badge">
-          <span aria-hidden="true" /> Synthetic data
+        <div className="session-summary">
+          <div className="environment-badge">
+            <span aria-hidden="true" /> Synthetic data
+          </div>
+          <div className="signed-in-user">
+            <strong>{currentUser}</strong>
+            <small>{roles.join(' · ')}</small>
+          </div>
+          <button className="sign-out-button" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
         </div>
       </header>
 
@@ -135,6 +154,7 @@ function App() {
 
         {isSubmissionOpen && (
           <ClaimSubmissionForm
+            accessToken={accessToken}
             onCancel={() => setIsSubmissionOpen(false)}
             onCreated={claimCreated}
           />
@@ -152,6 +172,8 @@ function App() {
 
         {selectedClaimId && (
           <ClaimDetailPanel
+            accessToken={accessToken}
+            canUpdateStatus={canUpdateStatus}
             key={selectedClaimId}
             claimId={selectedClaimId}
             onClose={() => setSelectedClaimId(null)}
@@ -177,18 +199,20 @@ function App() {
               <h2 id="workspace-title">Submitted claims</h2>
             </div>
             <div className="workspace-actions">
-              <button
-                type="button"
-                aria-expanded={isSubmissionOpen}
-                disabled={isSubmissionOpen}
-                onClick={() => {
-                  setCreatedClaim(null)
-                  setSelectedClaimId(null)
-                  setIsSubmissionOpen(true)
-                }}
-              >
-                New claim
-              </button>
+              {canSubmitClaims && (
+                <button
+                  type="button"
+                  aria-expanded={isSubmissionOpen}
+                  disabled={isSubmissionOpen}
+                  onClick={() => {
+                    setCreatedClaim(null)
+                    setSelectedClaimId(null)
+                    setIsSubmissionOpen(true)
+                  }}
+                >
+                  New claim
+                </button>
+              )}
               <button
                 className="refresh-button"
                 type="button"

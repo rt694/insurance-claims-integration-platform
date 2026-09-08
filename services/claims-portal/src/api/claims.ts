@@ -196,7 +196,18 @@ function correlationId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `claims-portal-${Date.now()}`
 }
 
-export async function listClaims(filters: ClaimFilters, signal?: AbortSignal): Promise<ClaimPage> {
+function authorizedHeaders(accessToken: string, headers: Record<string, string>) {
+  return {
+    ...headers,
+    Authorization: `Bearer ${accessToken}`,
+  }
+}
+
+export async function listClaims(
+  filters: ClaimFilters,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<ClaimPage> {
   const query = new URLSearchParams({
     page: String(filters.page),
     size: String(filters.size),
@@ -205,10 +216,10 @@ export async function listClaims(filters: ClaimFilters, signal?: AbortSignal): P
   if (filters.claimType) query.set('claimType', filters.claimType)
 
   const response = await fetch(`/api/v1/claims?${query}`, {
-    headers: {
+    headers: authorizedHeaders(accessToken, {
       Accept: 'application/json',
       'X-Correlation-ID': correlationId(),
-    },
+    }),
     signal,
   })
   const body = await readJson(response)
@@ -223,14 +234,14 @@ export async function listClaims(filters: ClaimFilters, signal?: AbortSignal): P
   return body
 }
 
-export async function createClaim(input: CreateClaimInput): Promise<Claim> {
+export async function createClaim(input: CreateClaimInput, accessToken: string): Promise<Claim> {
   const response = await fetch('/api/v1/claims', {
     method: 'POST',
-    headers: {
+    headers: authorizedHeaders(accessToken, {
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'X-Correlation-ID': correlationId(),
-    },
+    }),
     body: JSON.stringify(input),
   })
   const body = await readJson(response)
@@ -245,12 +256,16 @@ export async function createClaim(input: CreateClaimInput): Promise<Claim> {
   return body
 }
 
-export async function getClaim(id: string, signal?: AbortSignal): Promise<Claim> {
+export async function getClaim(
+  id: string,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<Claim> {
   const response = await fetch(`/api/v1/claims/${encodeURIComponent(id)}`, {
-    headers: {
+    headers: authorizedHeaders(accessToken, {
       Accept: 'application/json',
       'X-Correlation-ID': correlationId(),
-    },
+    }),
     signal,
   })
   const body = await readJson(response)
@@ -267,13 +282,14 @@ export async function getClaim(id: string, signal?: AbortSignal): Promise<Claim>
 
 export async function getClaimSummary(
   claimId: string,
+  accessToken: string,
   signal?: AbortSignal,
 ): Promise<ClaimSummary> {
   const response = await fetch(`/api/v1/claims/${encodeURIComponent(claimId)}/summary`, {
-    headers: {
+    headers: authorizedHeaders(accessToken, {
       Accept: 'application/json',
       'X-Correlation-ID': correlationId(),
-    },
+    }),
     signal,
   })
   const body = await readJson(response)
@@ -290,13 +306,14 @@ export async function getClaimSummary(
 
 export async function getClaimHistory(
   claimId: string,
+  accessToken: string,
   signal?: AbortSignal,
 ): Promise<ClaimStatusChange[]> {
   const response = await fetch(`/api/v1/claims/${encodeURIComponent(claimId)}/history`, {
-    headers: {
+    headers: authorizedHeaders(accessToken, {
       Accept: 'application/json',
       'X-Correlation-ID': correlationId(),
-    },
+    }),
     signal,
   })
   const body = await readJson(response)
@@ -314,14 +331,18 @@ export async function getClaimHistory(
   return body
 }
 
-export async function updateClaimStatus(id: string, status: ClaimStatus): Promise<Claim> {
+export async function updateClaimStatus(
+  id: string,
+  status: ClaimStatus,
+  accessToken: string,
+): Promise<Claim> {
   const response = await fetch(`/api/v1/claims/${encodeURIComponent(id)}/status`, {
     method: 'PATCH',
-    headers: {
+    headers: authorizedHeaders(accessToken, {
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'X-Correlation-ID': correlationId(),
-    },
+    }),
     body: JSON.stringify({ status }),
   })
   const body = await readJson(response)
