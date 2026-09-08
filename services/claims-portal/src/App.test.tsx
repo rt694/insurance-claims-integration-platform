@@ -63,6 +63,17 @@ async function fillValidClaim(user: ReturnType<typeof userEvent.setup>) {
   await user.type(form.getByLabelText('Incident description'), 'Synthetic collision damage')
 }
 
+function renderApp(roles = ['ADMIN']) {
+  return render(
+    <App
+      accessToken="synthetic-test-access-token"
+      currentUser="synthetic-test-admin"
+      roles={roles}
+      onSignOut={vi.fn()}
+    />,
+  )
+}
+
 describe('Claims portal', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(claimPage)))
@@ -71,7 +82,7 @@ describe('Claims portal', () => {
   afterEach(cleanup)
 
   it('loads and displays claims from the service', async () => {
-    render(<App />)
+    renderApp()
 
     expect(screen.getByText('Loading claims…')).toBeInTheDocument()
     expect(await screen.findByText('EXT-PORTAL-1001')).toBeInTheDocument()
@@ -82,14 +93,26 @@ describe('Claims portal', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/v1/claims?page=0&size=10',
       expect.objectContaining({
-        headers: expect.objectContaining({ 'X-Correlation-ID': expect.any(String) }),
+        headers: expect.objectContaining({
+          Authorization: 'Bearer synthetic-test-access-token',
+          'X-Correlation-ID': expect.any(String),
+        }),
       }),
     )
   })
 
+  it('shows the signed-in role and hides submission from reviewers', async () => {
+    renderApp(['REVIEWER'])
+
+    expect(await screen.findByText('EXT-PORTAL-1001')).toBeInTheDocument()
+    expect(screen.getByText('synthetic-test-admin')).toBeInTheDocument()
+    expect(screen.getByText('REVIEWER')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New claim' })).not.toBeInTheDocument()
+  })
+
   it('sends selected filters and resets the page', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     await user.selectOptions(screen.getByLabelText('Status'), 'UNDER_REVIEW')
@@ -107,7 +130,7 @@ describe('Claims portal', () => {
   it('requests the next server-side page', async () => {
     const user = userEvent.setup()
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ ...claimPage, totalElements: 11, totalPages: 2 }))
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     await user.click(screen.getByRole('button', { name: 'Next' }))
@@ -134,7 +157,7 @@ describe('Claims portal', () => {
         503,
       ),
     )
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Claims are temporarily unavailable.',
@@ -150,7 +173,7 @@ describe('Claims portal', () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({ ...claimPage, content: [], totalElements: 0, totalPages: 0 }),
     )
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByText('No matching claims')).toBeInTheDocument()
     expect(screen.getByText('There is nothing in this view yet.')).toBeInTheDocument()
@@ -158,7 +181,7 @@ describe('Claims portal', () => {
 
   it('rejects a response that does not match the API contract', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ content: 'not-an-array' }))
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The claims service returned an unexpected response.',
@@ -167,7 +190,7 @@ describe('Claims portal', () => {
 
   it('opens the submission form and prevents an invalid request', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     await user.click(screen.getByRole('button', { name: 'New claim' }))
@@ -191,7 +214,7 @@ describe('Claims portal', () => {
       description: 'Synthetic collision damage',
       estimatedLoss: 2500.5,
     }
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(createdClaim, true, 201))
@@ -213,6 +236,7 @@ describe('Claims portal', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
+          Authorization: 'Bearer synthetic-test-access-token',
           'Content-Type': 'application/json',
           'X-Correlation-ID': expect.any(String),
         }),
@@ -231,7 +255,7 @@ describe('Claims portal', () => {
 
   it('keeps the form open and maps backend field errors', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse(
@@ -268,7 +292,7 @@ describe('Claims portal', () => {
       }
       return Promise.resolve(jsonResponse(claimPage))
     })
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))
@@ -287,6 +311,27 @@ describe('Claims portal', () => {
         headers: expect.objectContaining({ 'X-Correlation-ID': expect.any(String) }),
       }),
     )
+  })
+
+  it('gives agents a read-only claim status view', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/summary')) return Promise.resolve(jsonResponse(claimSummary))
+      if (url.endsWith('/history')) return Promise.resolve(jsonResponse(initialClaimHistory))
+      if (url === `/api/v1/claims/${claimPage.content[0].id}`) {
+        return Promise.resolve(jsonResponse(claimPage.content[0]))
+      }
+      return Promise.resolve(jsonResponse(claimPage))
+    })
+    renderApp(['AGENT'])
+    await screen.findByText('EXT-PORTAL-1001')
+
+    await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))
+    const detailPanel = await screen.findByRole('region', { name: 'Claim details' })
+
+    expect(within(detailPanel).getByText('View-only status access')).toBeInTheDocument()
+    expect(within(detailPanel).queryByLabelText('Next status')).not.toBeInTheDocument()
   })
 
   it('treats a missing summary as pending and refreshes it independently', async () => {
@@ -317,7 +362,7 @@ describe('Claims portal', () => {
       }
       return Promise.resolve(jsonResponse(claimPage))
     })
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))
@@ -365,7 +410,7 @@ describe('Claims portal', () => {
       }
       return Promise.resolve(jsonResponse(claimPage))
     })
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     const reviewButton = screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' })
@@ -392,6 +437,7 @@ describe('Claims portal', () => {
     expect(JSON.parse(patchRequest?.[1]?.body as string)).toEqual({ status: 'UNDER_REVIEW' })
     expect(patchRequest?.[1]?.headers).toEqual(
       expect.objectContaining({
+        Authorization: 'Bearer synthetic-test-access-token',
         'Content-Type': 'application/json',
         'X-Correlation-ID': expect.any(String),
       }),
@@ -423,7 +469,7 @@ describe('Claims portal', () => {
       }
       return Promise.resolve(jsonResponse(claimPage))
     })
-    render(<App />)
+    renderApp()
     await screen.findByText('EXT-PORTAL-1001')
 
     await user.click(screen.getByRole('button', { name: 'Review claim EXT-PORTAL-1001' }))

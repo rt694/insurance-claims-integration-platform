@@ -26,7 +26,8 @@ an optional schema-validated OpenAI provider, and confirmed
 delayed retries, dead-letter routing, stable event IDs for redelivery, and broker-aware
 readiness. The mock remains the default, so local development never requires an API key.
 The React portal provides a typed, responsive claim inventory with server-side status
-and claim-type filters, pagination, correlation IDs, and Problem Details handling.
+and claim-type filters, pagination, correlation IDs, Problem Details handling, and an
+OpenID Connect sign-in flow using Authorization Code with PKCE.
 The claims API is a stateless OAuth 2.0 resource server: it validates signed JWTs and
 enforces separate agent, reviewer, and administrator permissions at the HTTP boundary.
 
@@ -139,10 +140,17 @@ local identity provider contract; signing keys, access tokens, and passwords mus
 never be committed. CORS trusts only `http://localhost:5173` by default and can be
 changed with `CLAIMS_CORS_ALLOWED_ORIGINS` (a comma-separated list).
 
-This backend story establishes the trust boundary first. The portal does not yet
-perform an interactive login or attach a bearer token, so its claim requests will
-receive `401 Unauthorized` until the next authentication story adds the local identity
-provider and portal sign-in flow.
+The local identity provider is Keycloak `26.7.3`. Its imported realm defines a public
+`claims-portal` client that uses Authorization Code with mandatory PKCE, a bearer-only
+`claims-service` audience, and three synthetic users whose passwords come from the
+ignored root `.env` file. The portal stores its OIDC session in browser session storage,
+renews it through the OIDC client, and adds the access token to every claims request.
+It never places a client secret in browser code because a public single-page application
+cannot keep one confidential.
+
+The UI reflects the authenticated role by hiding unavailable mutation controls, but
+this is only a usability layer. Spring Security still performs the authoritative check
+for every request; hiding a button is never considered an authorization control.
 
 ## Python worker processing pipeline
 
@@ -187,7 +195,7 @@ the untrusted claim JSON, disables response storage, and maps unusable upstream 
 to the worker's existing retry path. See the worker README for both provider setup
 options and the complete local consume → summarize → publish flow.
 
-## Run and manually verify both services
+## Run and manually verify the platform services
 
 Create your ignored local environment file and choose a local-only database
 password:
@@ -196,12 +204,18 @@ password:
 cp .env.example .env
 ```
 
-Edit `.env`, replace both password placeholders, and then start PostgreSQL and
-RabbitMQ:
+Edit `.env`, replace every password placeholder, and then start PostgreSQL, RabbitMQ,
+and the local identity provider:
 
 ```bash
-docker compose up --detach --wait postgres rabbitmq
+docker compose up --detach --wait postgres rabbitmq keycloak
 ```
+
+Keycloak is available at `http://localhost:8090`. Its administration console uses
+`KEYCLOAK_ADMIN_USERNAME` and `KEYCLOAK_ADMIN_PASSWORD`. Portal sign-in uses one of
+the synthetic `KEYCLOAK_AGENT_*`, `KEYCLOAK_REVIEWER_*`, or
+`KEYCLOAK_ADMIN_USER_*` credential pairs. These are project-local identities and are
+unrelated to your Docker or GitHub login.
 
 The RabbitMQ management UI is available at `http://localhost:15672`. Sign in with
 the `RABBITMQ_USERNAME` and `RABBITMQ_PASSWORD` values from your local `.env` file.
@@ -246,7 +260,7 @@ The readiness probe can be checked independently at
 Kubernetes can use this signal to decide whether the service is ready to receive
 traffic.
 
-When finished, stop PostgreSQL and RabbitMQ from the repository root with
+When finished, stop PostgreSQL, RabbitMQ, and Keycloak from the repository root with
 `docker compose down`. Named volumes keep their data for the next run. Running
 `docker compose down --volumes` also deletes the local database and broker data and
 should only be used when you intentionally want a clean reset.

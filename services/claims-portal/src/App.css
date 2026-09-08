@@ -76,6 +76,91 @@
   box-shadow: 0 0 0 4px rgb(127 214 172 / 12%);
 }
 
+.session-summary {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.signed-in-user {
+  padding-left: 18px;
+  border-left: 1px solid rgb(255 255 255 / 24%);
+}
+
+.signed-in-user strong,
+.signed-in-user small { display: block; }
+
+.signed-in-user strong { font-size: 0.88rem; }
+
+.signed-in-user small {
+  margin-top: 3px;
+  color: #bdd0c8;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+
+.sign-out-button {
+  color: #fff;
+  border-color: rgb(255 255 255 / 42%);
+}
+
+.authentication-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px;
+  background:
+    linear-gradient(135deg, rgb(12 48 40 / 96%), rgb(20 83 70 / 88%)),
+    #0c3028;
+}
+
+.authentication-card {
+  width: min(540px, 100%);
+  padding: clamp(32px, 7vw, 64px);
+  background: var(--paper);
+  border-top: 5px solid var(--gold);
+  border-radius: 8px;
+  box-shadow: 0 30px 80px rgb(0 0 0 / 24%);
+}
+
+.authentication-card .brand-mark { margin-bottom: 30px; }
+
+.authentication-card h1 {
+  margin-bottom: 20px;
+  font-size: clamp(2.3rem, 8vw, 4rem);
+}
+
+.authentication-card > p:not(.eyebrow) {
+  margin-bottom: 28px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.authentication-card > small {
+  display: block;
+  margin-top: 24px;
+  color: var(--muted);
+}
+
+.authentication-loading {
+  text-align: center;
+}
+
+.authentication-spinner {
+  display: inline-block;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 22px;
+  border: 4px solid #d5e2dc;
+  border-top-color: var(--green-800);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 main {
   width: min(1440px, 100%);
   margin: 0 auto;
@@ -943,6 +1028,8 @@ footer {
 @media (max-width: 780px) {
   .topbar { padding: 0 20px; }
   .environment-badge { font-size: 0; }
+  .session-summary { gap: 10px; }
+  .signed-in-user { padding-left: 10px; }
   main { padding: 42px 16px 56px; }
   .page-heading {
     grid-template-columns: 1fr;

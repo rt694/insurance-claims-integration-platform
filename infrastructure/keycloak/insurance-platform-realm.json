@@ -1,0 +1,140 @@
+{
+  "realm": "insurance-platform",
+  "displayName": "Insurance Claims Platform",
+  "enabled": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "AGENT",
+        "description": "May submit and read synthetic claims"
+      },
+      {
+        "name": "REVIEWER",
+        "description": "May read and transition synthetic claims"
+      },
+      {
+        "name": "ADMIN",
+        "description": "May perform all claims operations"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "claims-service",
+      "name": "Claims Service API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true
+    },
+    {
+      "clientId": "claims-portal",
+      "name": "Claims Review Portal",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "claims-service-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "claims-service",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "${KEYCLOAK_AGENT_USERNAME}",
+      "enabled": true,
+      "email": "claims-agent@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Agent",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_AGENT_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "AGENT"
+      ]
+    },
+    {
+      "username": "${KEYCLOAK_REVIEWER_USERNAME}",
+      "enabled": true,
+      "email": "claims-reviewer@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Reviewer",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_REVIEWER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "REVIEWER"
+      ]
+    },
+    {
+      "username": "${KEYCLOAK_ADMIN_USER_USERNAME}",
+      "enabled": true,
+      "email": "claims-admin@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Administrator",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_ADMIN_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ADMIN"
+      ]
+    }
+  ]
+}
