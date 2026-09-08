@@ -27,6 +27,8 @@ delayed retries, dead-letter routing, stable event IDs for redelivery, and broke
 readiness. The mock remains the default, so local development never requires an API key.
 The React portal provides a typed, responsive claim inventory with server-side status
 and claim-type filters, pagination, correlation IDs, and Problem Details handling.
+The claims API is a stateless OAuth 2.0 resource server: it validates signed JWTs and
+enforces separate agent, reviewer, and administrator permissions at the HTTP boundary.
 
 ## Claim lifecycle
 
@@ -112,6 +114,35 @@ pnpm build
 Run `pnpm dev` and open `http://localhost:5173` after starting the claims service.
 Vite proxies `/api` requests to `http://localhost:8080`, so the frontend uses the same
 relative API paths it can use behind a single production gateway later.
+
+## Claims API authentication
+
+Business endpoints require an `Authorization: Bearer <token>` header. Spring Security
+verifies the JWT signature against the configured JSON Web Key Set, then validates
+its issuer, expiration, and `claims-service` audience. The token's flat `roles` claim
+is mapped to these endpoint permissions:
+
+| Role | Read claims, history, and summaries | Submit claims | Change claim status |
+| --- | --- | --- | --- |
+| `AGENT` | Yes | Yes | No |
+| `REVIEWER` | Yes | No | Yes |
+| `ADMIN` | Yes | Yes | Yes |
+
+Health, application info, Swagger UI, and the OpenAPI document remain public so
+operators and developers can inspect the service. Missing or insufficient credentials
+produce sanitized Problem Details responses with the request correlation ID; unknown
+routes are denied by default.
+
+The JWT issuer, key-set URL, expected audience, and allowed browser origins are
+environment-based settings in `.env.example`. The checked-in values describe the
+local identity provider contract; signing keys, access tokens, and passwords must
+never be committed. CORS trusts only `http://localhost:5173` by default and can be
+changed with `CLAIMS_CORS_ALLOWED_ORIGINS` (a comma-separated list).
+
+This backend story establishes the trust boundary first. The portal does not yet
+perform an interactive login or attach a bearer token, so its claim requests will
+receive `401 Unauthorized` until the next authentication story adds the local identity
+provider and portal sign-in flow.
 
 ## Python worker processing pipeline
 

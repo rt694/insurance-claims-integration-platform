@@ -11,6 +11,7 @@ import com.rohantummala.insurance.claims.application.event.ClaimSummaryCompleted
 import com.rohantummala.insurance.claims.application.event.ClaimSummaryCompletedPayload;
 import com.rohantummala.insurance.claims.application.service.ClaimSummaryService;
 import com.rohantummala.insurance.claims.domain.model.HumanReviewQueue;
+import com.rohantummala.insurance.claims.support.WithMockAdminJwt;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -25,6 +26,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("in-memory")
+@WithMockAdminJwt
 class ClaimSummaryApiTest {
 
   @Autowired private MockMvc mockMvc;
