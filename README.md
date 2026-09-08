@@ -4,10 +4,10 @@ A production-style learning project for submitting and processing synthetic insu
 
 > This project uses synthetic data only. The AI component will summarize claim information and flag missing details for a human reviewer. It must never approve, deny, price, or determine coverage for a claim.
 
-## Current edition
+## What's in the project
 
-This edition includes two Spring Boot services, a locally runnable Python worker,
-and the first React claims-portal story.
+The project includes two Spring Boot services, a Python worker, a React portal, and
+the local infrastructure needed to run them together.
 The claims service owns claim intake,
 lifecycle rules, and durable PostgreSQL persistence. Before storing a new claim, it
 calls a synthetic policy service to confirm that the policy is active, covers the
@@ -25,9 +25,10 @@ an optional schema-validated OpenAI provider, and confirmed
 `claim.summary.completed.v1` publication. It uses manual acknowledgements, bounded
 delayed retries, dead-letter routing, stable event IDs for redelivery, and broker-aware
 readiness. The mock remains the default, so local development never requires an API key.
-The React portal provides a typed, responsive claim inventory with server-side status
-and claim-type filters, pagination, correlation IDs, Problem Details handling, and an
-OpenID Connect sign-in flow using Authorization Code with PKCE.
+The React portal provides a typed, responsive workspace for submitting, browsing, and
+reviewing claims. It includes server-side filters, pagination, correlation IDs,
+Problem Details handling, summary results, status history, and an OpenID Connect
+sign-in flow using Authorization Code with PKCE.
 The claims API is a stateless OAuth 2.0 resource server: it validates signed JWTs and
 enforces separate agent, reviewer, and administrator permissions at the HTTP boundary.
 
@@ -47,6 +48,12 @@ stateDiagram-v2
 
 `CANCELLED` and `CLOSED` are terminal states. The domain model rejects every transition not shown above. Domain validation keeps these rules consistent regardless of whether a claim operation originates from REST, messaging, or a future administrative process.
 
+In plain terms, the synchronous path validates and stores the claim before the API
+responds. The asynchronous path starts from the outbox row committed with that claim,
+moves through RabbitMQ and the worker, and ends when the claims service stores a
+reviewer-assistance summary. Keeping those paths separate means a slow summary does
+not make claim intake slow or unreliable.
+
 ## Repository layout
 
 ```text
@@ -63,10 +70,10 @@ the claims application.
 
 ## Prerequisites
 
-- Java 17
+- Java 17 (the containers and CI currently use Temurin `17.0.20+8`)
 - Docker Desktop with Docker Compose
-- Node.js 24 LTS (for the later frontend edition)
-- Python 3.12 and uv
+- Node.js `24.19.0` and pnpm `11.19.0`
+- Python `3.12.14` and uv `0.12.10`
 
 Maven does not need to be installed globally. The claims service includes Maven Wrapper, which downloads and uses the project's configured Maven version.
 
@@ -77,10 +84,10 @@ PostgreSQL and RabbitMQ containers with Testcontainers.
 
 ```bash
 cd services/claims-service
-./mvnw test
+./mvnw verify
 
 cd ../policy-service
-../claims-service/mvnw -f pom.xml test
+../claims-service/mvnw -f pom.xml verify
 ```
 
 The policy service reuses the repository's Maven Wrapper executable while keeping
@@ -106,7 +113,7 @@ Build and test the React portal:
 
 ```bash
 cd services/claims-portal
-pnpm install
+pnpm install --frozen-lockfile
 pnpm lint
 pnpm test
 pnpm build
@@ -115,6 +122,26 @@ pnpm build
 Run `pnpm dev` and open `http://localhost:5173` after starting the claims service.
 Vite proxies `/api` requests to `http://localhost:8080`, so the frontend uses the same
 relative API paths it can use behind a single production gateway later.
+
+## Automatic checks on GitHub
+
+GitHub Actions runs the same checks whenever a pull request targets the repository or
+code reaches `main`. The workflow keeps each part in its own job, so a failed check
+points directly to the part that needs attention:
+
+| Check | What it proves |
+| --- | --- |
+| Claims service | Java compilation plus unit, database, HTTP, and RabbitMQ tests |
+| Policy service | Java compilation plus policy contract and behavior tests |
+| Claim summary worker | Locked install, formatting, linting, strict types, and tests with coverage |
+| Claims portal | Locked install, linting, component tests, TypeScript, and production build |
+| Container build | Compose interpolation is valid and all four application images build |
+
+The workflow pins Java, Python, uv, Node.js, and pnpm to the same versions used by the
+container builds. Action dependencies are pinned to full commit hashes so an upstream
+tag cannot silently change the code a pull request runs. The container-build job uses
+obviously fake, job-scoped passwords only because Compose validates that required
+variables exist; CI does not start the stack or need repository secrets.
 
 ## Claims API authentication
 
@@ -151,6 +178,17 @@ cannot keep one confidential.
 The UI reflects the authenticated role by hiding unavailable mutation controls, but
 this is only a usability layer. Spring Security still performs the authoritative check
 for every request; hiding a button is never considered an authorization control.
+
+For the protected command-line examples below, sign in through the portal and copy
+the current `access_token` from the portal's `oidc.user:` entry under your browser's
+session storage. Keep it in a terminal variable only:
+
+```bash
+export CLAIMS_ACCESS_TOKEN="replace-with-a-current-local-access-token"
+```
+
+Tokens expire, so sign in again and replace the value if an API call starts returning
+`401 Unauthorized`. Run `unset CLAIMS_ACCESS_TOKEN` when you finish.
 
 ## Monitoring and a performance baseline
 
@@ -407,6 +445,7 @@ With the claims service running, submit a claim from a second terminal:
 curl --include \
   --request POST \
   --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
   --header 'X-Correlation-ID: local-demo-1001' \
   --data '{
     "externalReference": "EXT-DEMO-1001",
@@ -588,8 +627,9 @@ The supported review queues are `STANDARD_REVIEW`, `COMPLEX_REVIEW`, and
 `SPECIALIST_REVIEW`. These are routing suggestions for people, not claim decisions.
 The consumer never approves, denies, prices, or determines coverage for a claim.
 
-Until the Python worker is added, simulate its completed event through RabbitMQ's
-local management API. Set `CLAIM_ID` to the ID returned by claim submission:
+The Python worker normally creates this event for you. To test the result-consumer
+contract by itself, you can publish a completed event through RabbitMQ's local
+management API. Set `CLAIM_ID` to the ID returned by claim submission:
 
 ```bash
 CLAIM_ID="replace-with-the-created-claim-id"
@@ -633,7 +673,9 @@ jq -nc --arg payload "$summary_event" '{
 The management API responds with `{"routed":true}`. Then retrieve the stored result:
 
 ```bash
-curl --silent "http://localhost:8080/api/v1/claims/$CLAIM_ID/summary"
+curl --silent \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
+  "http://localhost:8080/api/v1/claims/$CLAIM_ID/summary"
 ```
 
 An existing claim without a result returns a `404` Problem Details response with
@@ -674,6 +716,7 @@ Use the `id` returned by claim submission to retrieve that claim:
 
 ```bash
 curl --silent \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
   --header 'X-Correlation-ID: local-demo-get-1001' \
   http://localhost:8080/api/v1/claims/{id}
 ```
@@ -683,6 +726,7 @@ claims with zero-based pagination and optional `status` and `claimType` filters:
 
 ```bash
 curl --silent \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
   'http://localhost:8080/api/v1/claims?page=0&size=20&status=SUBMITTED&claimType=AUTO'
 ```
 
@@ -698,6 +742,7 @@ Request a lifecycle transition with the claim ID returned by submission:
 curl --silent \
   --request PATCH \
   --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
   --header 'X-Correlation-ID: local-status-1001' \
   --data '{"status":"UNDER_REVIEW"}' \
   http://localhost:8080/api/v1/claims/{id}/status
@@ -711,7 +756,9 @@ change the claim or append history.
 Retrieve the oldest-to-newest audit trail:
 
 ```bash
-curl --silent http://localhost:8080/api/v1/claims/{id}/history
+curl --silent \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
+  http://localhost:8080/api/v1/claims/{id}/history
 ```
 
 Every claim starts with an initial history record whose `previousStatus` is `null`
@@ -721,3 +768,32 @@ reviewers from silently overwriting one another.
 
 Claims OpenAPI JSON is available at `http://localhost:8080/v3/api-docs`, and its
 interactive Swagger UI is available at `http://localhost:8080/swagger-ui.html`.
+
+## A quick way to explain the design
+
+Start with ownership: the claims service owns claim state, the policy service owns
+the synthetic coverage answer, the worker owns reviewer-assistance generation, and
+the portal is the human-facing client. Then explain reliability: PostgreSQL and the
+transactional outbox keep claim creation atomic, RabbitMQ decouples intake from slow
+background work, and inbox IDs make redelivery safe. Finish with trust boundaries:
+Keycloak issues identities, the API enforces roles, claim text is treated as untrusted
+input, and the AI output can assist a person but cannot make a claim decision.
+
+## Common local problems
+
+| Symptom | First things to check |
+| --- | --- |
+| Portal shows `502` | Run `docker compose ps`, then check `docker compose logs claims-service`; Nginx uses `502` when its API upstream is not ready or reachable. |
+| A container is unhealthy | Read its health check and recent logs with `docker compose ps` and `docker compose logs --tail=100 <service>`. |
+| API returns `401` | Confirm you are signed in and replace the expired `CLAIMS_ACCESS_TOKEN`. |
+| API returns `403` | The token is valid, but its role does not allow that operation; use the role table above. |
+| Claim submission returns `503` | Check policy-service health and logs; dependency retries and the circuit breaker intentionally turn an outage into a sanitized response. |
+| Summary never appears | Check the outbox status, RabbitMQ queues, worker readiness, and both worker and claims-service logs in that order. |
+| A port is already in use | Stop the other local process or stack using `5173`, `8080`, `8082`, `8083`, `8090`, `5432`, `5672`, or `15672`. |
+| Tests cannot start containers | Start Docker Desktop and confirm `docker info` succeeds before rerunning the test. |
+
+This is a production-style learning system, not a production deployment. It uses
+synthetic data, a development Keycloak setup, local passwords, and no public TLS or
+cloud infrastructure. A real deployment would add managed secret storage, encrypted
+external traffic, protected operator endpoints, backups, alerting, capacity planning,
+and an organization-specific review and governance process.
