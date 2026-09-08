@@ -12,6 +12,7 @@ import com.rohantummala.insurance.claims.application.exception.InvalidPolicyServ
 import com.rohantummala.insurance.claims.application.exception.PolicyServiceUnavailableException;
 import com.rohantummala.insurance.claims.application.policy.PolicyValidationResult;
 import com.rohantummala.insurance.claims.application.port.PolicyValidationPort;
+import com.rohantummala.insurance.claims.support.WithMockAdminJwt;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("in-memory")
+@WithMockAdminJwt
 class PolicyValidationApiTest {
 
   @Autowired private MockMvc mockMvc;
