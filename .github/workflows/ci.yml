@@ -1,0 +1,124 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  claims-service:
+    name: Claims service
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 17.0.20+8
+          cache: maven
+          cache-dependency-path: |
+            services/claims-service/pom.xml
+            services/claims-service/.mvn/wrapper/maven-wrapper.properties
+      - name: Run claims-service checks
+        working-directory: services/claims-service
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  policy-service:
+    name: Policy service
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 17.0.20+8
+          cache: maven
+          cache-dependency-path: |
+            services/policy-service/pom.xml
+            services/claims-service/.mvn/wrapper/maven-wrapper.properties
+      - name: Run policy-service checks
+        working-directory: services/policy-service
+        run: ../claims-service/mvnw --batch-mode --no-transfer-progress verify
+
+  claim-summary-worker:
+    name: Claim summary worker
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: 3.12.14
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.12.10
+          enable-cache: true
+          cache-dependency-glob: services/claim-summary-worker/uv.lock
+      - name: Install locked dependencies
+        working-directory: services/claim-summary-worker
+        run: uv sync --locked
+      - name: Check Python style
+        working-directory: services/claim-summary-worker
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Check Python types
+        working-directory: services/claim-summary-worker
+        run: uv run mypy
+      - name: Run worker tests
+        working-directory: services/claim-summary-worker
+        run: uv run pytest
+
+  claims-portal:
+    name: Claims portal
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+      - name: Install the pinned pnpm version
+        run: npm install --global pnpm@11.19.0
+      - name: Install locked dependencies
+        working-directory: services/claims-portal
+        run: pnpm install --frozen-lockfile
+      - name: Check and test the portal
+        working-directory: services/claims-portal
+        run: |
+          pnpm lint
+          pnpm test
+          pnpm build
+
+  container-build:
+    name: Container build
+    runs-on: ubuntu-24.04
+    env:
+      CLAIMS_DB_PASSWORD: ci-only-placeholder
+      KEYCLOAK_ADMIN_PASSWORD: ci-only-placeholder
+      KEYCLOAK_ADMIN_USER_PASSWORD: ci-only-placeholder
+      KEYCLOAK_AGENT_PASSWORD: ci-only-placeholder
+      KEYCLOAK_REVIEWER_PASSWORD: ci-only-placeholder
+      RABBITMQ_PASSWORD: ci-only-placeholder
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate the Compose file
+        run: docker compose config --quiet
+      - name: Build the application images
+        run: docker compose build

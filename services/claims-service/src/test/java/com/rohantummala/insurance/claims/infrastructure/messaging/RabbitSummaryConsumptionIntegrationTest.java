@@ -107,7 +107,9 @@ class RabbitSummaryConsumptionIntegrationTest {
         .atMost(Duration.ofSeconds(5))
         .untilAsserted(
             () -> {
-              ClaimSummary stored = claimSummaryRepository.findByClaimId(claim.id()).orElseThrow();
+              var storedSummary = claimSummaryRepository.findByClaimId(claim.id());
+              assertThat(storedSummary).isPresent();
+              ClaimSummary stored = storedSummary.orElseThrow();
               assertThat(stored.sourceEventId()).isEqualTo(event.eventId());
               assertThat(stored.summary()).isEqualTo(event.data().summary());
               assertThat(stored.missingInformation()).containsExactly("Police report");
