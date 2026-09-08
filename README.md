@@ -152,6 +152,60 @@ The UI reflects the authenticated role by hiding unavailable mutation controls, 
 this is only a usability layer. Spring Security still performs the authoritative check
 for every request; hiding a button is never considered an authorization control.
 
+## Monitoring and a performance baseline
+
+The platform now gives you two ways to understand what is happening. Correlation IDs
+help you follow one request through the claims and policy services, while metrics show
+the bigger picture—traffic, response times, errors, outbox delivery, and summary
+processing. The metrics intentionally leave out claim IDs, policy numbers, usernames,
+and other values that would create a separate time series for almost every request.
+
+Both Java services provide liveness and readiness checks through Actuator and publish
+metrics in Prometheus format. Only `health`, `info`, and `prometheus` are available;
+the other Actuator endpoints stay off by default. You need an `ADMIN` bearer token to
+view claims-service metrics because they reveal details about how the application is
+running:
+
+```bash
+curl --fail --silent \
+  --header "Authorization: Bearer $CLAIMS_PERF_TOKEN" \
+  http://localhost:8080/actuator/prometheus
+
+curl --fail --silent http://localhost:8082/actuator/prometheus
+curl --fail --silent http://localhost:8083/metrics
+```
+
+These are the main custom metrics to look for:
+
+| Metric | What it reveals |
+| --- | --- |
+| `insurance_claims_submissions_total` | Accepted, rejected, duplicate, and failed submissions by claim type |
+| `insurance_claims_policy_validation_seconds` | Policy-validation latency and outcome |
+| `insurance_claims_outbox_publications_total` | Confirmed and failed RabbitMQ publications |
+| `insurance_claims_summary_results_total` | Stored, duplicate, retried, dead-lettered, and requeued results |
+| `insurance_policy_validations_total` | Policy decisions by finite business reason and claim type |
+| `insurance_worker_claim_summaries_total` | Successful and failed worker processing attempts |
+| `insurance_worker_claim_summary_duration_seconds` | End-to-end worker generation and publication time |
+
+The included measurement script sends a limited number of concurrent GET requests and
+reports status counts, requests per second, error rate, and mean/p50/p95/p99/max
+response times. Sign into the local portal as an agent, reviewer, or administrator,
+put its short-lived access token in an environment variable, and run this from the
+repository root:
+
+```bash
+export CLAIMS_PERF_TOKEN="replace-with-a-current-local-access-token"
+python3 scripts/measure_claims_api.py --requests 200 --concurrency 10 \
+  --max-error-rate 0 --max-p95-ms 500
+unset CLAIMS_PERF_TOKEN
+```
+
+Keep tokens in your local environment or another ignored location—never in a script,
+report, or commit. For useful comparisons, run the test while the local stack is idle,
+repeat it a few times, and note the machine, dataset size, concurrency, and command.
+The result is a local baseline for spotting slowdowns later; it is not a promise of
+production capacity.
+
 ## Python worker processing pipeline
 
 The worker rejects unsupported event types and versions, mismatched aggregate and

@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
@@ -16,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@AutoConfigureMetrics
 class PolicyValidationApiTest {
 
   @Autowired private MockMvc mockMvc;
@@ -67,6 +69,10 @@ class PolicyValidationApiTest {
   @Test
   void publishesHealthAndOpenApiDocuments() throws Exception {
     mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    mockMvc
+        .perform(get("/actuator/prometheus"))
+        .andExpect(status().isOk())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("jvm_info")));
     mockMvc
         .perform(get("/v3/api-docs"))
         .andExpect(status().isOk())

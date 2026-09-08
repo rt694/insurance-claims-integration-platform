@@ -4,6 +4,7 @@ import com.rohantummala.insurance.claims.application.port.EventPublisher;
 import com.rohantummala.insurance.claims.application.port.OutboxPublicationRepository;
 import com.rohantummala.insurance.claims.application.service.OutboxPublicationService;
 import com.rohantummala.insurance.claims.infrastructure.messaging.RabbitTopology;
+import com.rohantummala.insurance.claims.observability.ClaimsMetrics;
 import java.time.Clock;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
@@ -138,13 +139,15 @@ public class RabbitMqConfiguration {
       OutboxPublicationRepository repository,
       EventPublisher eventPublisher,
       Clock clock,
-      OutboxPublisherProperties properties) {
+      OutboxPublisherProperties properties,
+      ClaimsMetrics metrics) {
     return new OutboxPublicationService(
         repository,
         eventPublisher,
         clock,
         properties.batchSize(),
         properties.leaseDuration(),
-        properties.retryDelay());
+        properties.retryDelay(),
+        metrics);
   }
 }

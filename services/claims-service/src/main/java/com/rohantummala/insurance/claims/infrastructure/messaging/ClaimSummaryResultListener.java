@@ -7,6 +7,7 @@ import com.rohantummala.insurance.claims.application.exception.InvalidClaimSumma
 import com.rohantummala.insurance.claims.application.service.ClaimSummaryService;
 import com.rohantummala.insurance.claims.application.service.SummaryProcessingResult;
 import com.rohantummala.insurance.claims.configuration.SummaryConsumerProperties;
+import com.rohantummala.insurance.claims.observability.ClaimsMetrics;
 import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,17 +32,20 @@ public class ClaimSummaryResultListener {
   private final ClaimSummaryMessageDecoder decoder;
   private final ClaimSummaryService summaryService;
   private final SummaryFailureRouter failureRouter;
+  private final ClaimsMetrics metrics;
   private final int maxAttempts;
 
   public ClaimSummaryResultListener(
       ClaimSummaryMessageDecoder decoder,
       ClaimSummaryService summaryService,
       SummaryFailureRouter failureRouter,
-      SummaryConsumerProperties properties) {
+      SummaryConsumerProperties properties,
+      ClaimsMetrics metrics) {
     this.decoder = decoder;
     this.summaryService = summaryService;
     this.failureRouter = failureRouter;
     this.maxAttempts = properties.maxAttempts();
+    this.metrics = metrics;
   }
 
   @RabbitListener(queues = RabbitTopology.CLAIM_SUMMARY_RESULTS_QUEUE, ackMode = "MANUAL")
@@ -53,6 +57,7 @@ public class ClaimSummaryResultListener {
           MDC.putCloseable(CORRELATION_ID_MDC_KEY, event.correlationId())) {
         SummaryProcessingResult result = summaryService.record(event);
         channel.basicAck(deliveryTag, false);
+        metrics.recordSummaryResult(result.status().name().toLowerCase(java.util.Locale.ROOT));
         LOGGER.info(
             "Claim summary processed status={} eventId={} claimId={}",
             result.status(),
@@ -74,6 +79,7 @@ public class ClaimSummaryResultListener {
       if (attempt >= maxAttempts) {
         failureRouter.routeToDeadLetter(message, processingFailure.getClass().getSimpleName());
         channel.basicAck(deliveryTag, false);
+        metrics.recordSummaryResult("dead_lettered");
         LOGGER.warn(
             "Claim summary moved to dead-letter queue after attempt={} messageId={} failureType={}",
             attempt,
@@ -84,6 +90,7 @@ public class ClaimSummaryResultListener {
 
       failureRouter.routeForRetry(message, attempt, processingFailure.getClass().getSimpleName());
       channel.basicAck(deliveryTag, false);
+      metrics.recordSummaryResult("retried");
       LOGGER.warn(
           "Claim summary scheduled for retry attempt={} messageId={} failureType={}",
           attempt + 1,
@@ -100,6 +107,7 @@ public class ClaimSummaryResultListener {
     try {
       failureRouter.routeToDeadLetter(message, processingFailure.getClass().getSimpleName());
       channel.basicAck(deliveryTag, false);
+      metrics.recordSummaryResult("dead_lettered");
       LOGGER.warn(
           "Claim summary moved to dead-letter queue messageId={} failureType={}",
           message.getMessageProperties().getMessageId(),
@@ -113,6 +121,7 @@ public class ClaimSummaryResultListener {
       Message message, Channel channel, long deliveryTag, MessageRoutingException routingFailure)
       throws IOException {
     channel.basicNack(deliveryTag, false, true);
+    metrics.recordSummaryResult("requeued");
     LOGGER.error(
         "Failed to route claim summary; original requeued messageId={} failureType={}",
         message.getMessageProperties().getMessageId(),

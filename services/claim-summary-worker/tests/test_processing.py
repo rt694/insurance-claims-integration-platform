@@ -13,6 +13,7 @@ from claim_summary_worker.contracts import (
     SummaryModelInput,
     decode_claim_submitted,
 )
+from claim_summary_worker.metrics import WorkerMetrics
 from claim_summary_worker.processing import (
     ClaimSummaryProcessor,
     ProviderOutputError,
@@ -51,11 +52,13 @@ def test_processor_preserves_identity_and_correlation(claim_event: dict[str, Any
     submitted = decode_claim_submitted(json.dumps(claim_event).encode())
     provider = FixedProvider(submitted.data.claim_id)
     publisher = RecordingPublisher()
+    metrics = WorkerMetrics()
     processor = ClaimSummaryProcessor(
         provider,
         publisher,
         clock=lambda: GENERATED_AT,
         event_id_factory=lambda _: RESULT_EVENT_ID,
+        metrics=metrics,
     )
 
     asyncio.run(processor.handle(submitted))
@@ -71,17 +74,30 @@ def test_processor_preserves_identity_and_correlation(claim_event: dict[str, Any
     assert completed.correlation_id == submitted.correlation_id
     assert completed.occurred_at == GENERATED_AT
     assert completed.data.generated_at == GENERATED_AT
+    assert (
+        metrics.registry.get_sample_value(
+            "insurance_worker_claim_summaries_total", {"outcome": "success"}
+        )
+        == 1
+    )
 
 
 def test_processor_rejects_cross_claim_provider_output(claim_event: dict[str, Any]) -> None:
     submitted = decode_claim_submitted(json.dumps(claim_event).encode())
     publisher = RecordingPublisher()
-    processor = ClaimSummaryProcessor(FixedProvider(uuid4()), publisher)
+    metrics = WorkerMetrics()
+    processor = ClaimSummaryProcessor(FixedProvider(uuid4()), publisher, metrics=metrics)
 
     with pytest.raises(ProviderOutputError, match="does not match"):
         asyncio.run(processor.handle(submitted))
 
     assert publisher.events == []
+    assert (
+        metrics.registry.get_sample_value(
+            "insurance_worker_claim_summaries_total", {"outcome": "error"}
+        )
+        == 1
+    )
 
 
 def test_completed_event_id_is_stable_for_source_redelivery(claim_event: dict[str, Any]) -> None:

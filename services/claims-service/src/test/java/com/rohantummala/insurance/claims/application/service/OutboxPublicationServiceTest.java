@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 import com.rohantummala.insurance.claims.application.event.OutboxEventPublication;
 import com.rohantummala.insurance.claims.application.port.EventPublisher;
 import com.rohantummala.insurance.claims.application.port.OutboxPublicationRepository;
+import com.rohantummala.insurance.claims.observability.ClaimsMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -27,6 +29,7 @@ class OutboxPublicationServiceTest {
 
   private final OutboxPublicationRepository repository = mock(OutboxPublicationRepository.class);
   private final EventPublisher eventPublisher = mock(EventPublisher.class);
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final OutboxPublicationService service =
       new OutboxPublicationService(
           repository,
@@ -34,7 +37,8 @@ class OutboxPublicationServiceTest {
           Clock.fixed(NOW, ZoneOffset.UTC),
           25,
           LEASE_DURATION,
-          RETRY_DELAY);
+          RETRY_DELAY,
+          new ClaimsMetrics(meterRegistry));
 
   @BeforeEach
   void claimDefaultEmptyBatch() {
@@ -55,6 +59,7 @@ class OutboxPublicationServiceTest {
     verify(eventPublisher).publish(second);
     verify(repository).markPublished(first.eventId(), 1, NOW);
     verify(repository).markPublished(second.eventId(), 1, NOW);
+    assertThat(publicationCount("published")).isEqualTo(2);
   }
 
   @Test
@@ -77,6 +82,8 @@ class OutboxPublicationServiceTest {
             NOW.plus(RETRY_DELAY),
             "IllegalStateException: broker unavailable");
     verify(repository).markPublished(successfulEvent.eventId(), 1, NOW);
+    assertThat(publicationCount("published")).isEqualTo(1);
+    assertThat(publicationCount("failed")).isEqualTo(1);
   }
 
   @Test
@@ -99,5 +106,13 @@ class OutboxPublicationServiceTest {
         "correlation-" + eventId,
         "{\"eventId\":\"%s\"}".formatted(eventId),
         attemptNumber);
+  }
+
+  private double publicationCount(String outcome) {
+    return meterRegistry
+        .get("insurance.claims.outbox.publications")
+        .tag("outcome", outcome)
+        .counter()
+        .count();
   }
 }
