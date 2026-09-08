@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +29,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@AutoConfigureMetrics
 @ActiveProfiles("in-memory")
 class ClaimSecurityApiTest {
 
@@ -43,6 +45,15 @@ class ClaimSecurityApiTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.components.securitySchemes['bearer-jwt'].scheme").value("bearer"))
         .andExpect(jsonPath("$.paths['/api/v1/claims'].get.security[0]['bearer-jwt']").exists());
+  }
+
+  @Test
+  void restrictsPrometheusMetricsToAdministrators() throws Exception {
+    mockMvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
+    mockMvc
+        .perform(get("/actuator/prometheus").with(role("REVIEWER")))
+        .andExpect(status().isForbidden());
+    mockMvc.perform(get("/actuator/prometheus").with(role("ADMIN"))).andExpect(status().isOk());
   }
 
   @Test

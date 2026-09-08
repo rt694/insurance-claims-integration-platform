@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.rohantummala.insurance.claims.application.command.SubmitClaimCommand;
+import com.rohantummala.insurance.claims.application.exception.DuplicateClaimExternalReferenceException;
 import com.rohantummala.insurance.claims.application.exception.PolicyServiceUnavailableException;
 import com.rohantummala.insurance.claims.application.exception.PolicyValidationRejectedException;
 import com.rohantummala.insurance.claims.application.policy.PolicyValidationRequest;
@@ -14,6 +15,8 @@ import com.rohantummala.insurance.claims.application.policy.PolicyValidationResu
 import com.rohantummala.insurance.claims.application.port.PolicyValidationPort;
 import com.rohantummala.insurance.claims.domain.model.Claim;
 import com.rohantummala.insurance.claims.domain.model.ClaimType;
+import com.rohantummala.insurance.claims.observability.ClaimsMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -33,10 +36,14 @@ class ClaimSubmissionServiceTest {
   @Mock private ClaimCreationService claimCreationService;
 
   private ClaimSubmissionService service;
+  private SimpleMeterRegistry meterRegistry;
 
   @BeforeEach
   void setUp() {
-    service = new ClaimSubmissionService(policyValidationPort, claimCreationService);
+    meterRegistry = new SimpleMeterRegistry();
+    service =
+        new ClaimSubmissionService(
+            policyValidationPort, claimCreationService, new ClaimsMetrics(meterRegistry));
   }
 
   @Test
@@ -56,6 +63,8 @@ class ClaimSubmissionServiceTest {
     assertThat(requestCaptor.getValue().claimType()).isEqualTo(ClaimType.AUTO);
     assertThat(requestCaptor.getValue().incidentDate()).isEqualTo(LocalDate.of(2026, 1, 10));
     verify(claimCreationService).create(command);
+    assertThat(submissionCount("auto", "accepted")).isEqualTo(1);
+    assertThat(policyValidationCount("accepted")).isEqualTo(1);
   }
 
   @Test
@@ -70,6 +79,8 @@ class ClaimSubmissionServiceTest {
         .isInstanceOf(PolicyValidationRejectedException.class)
         .hasMessage("Claim type is not covered by the policy");
     verify(claimCreationService, never()).create(command);
+    assertThat(submissionCount("auto", "rejected")).isEqualTo(1);
+    assertThat(policyValidationCount("rejected")).isEqualTo(1);
   }
 
   @Test
@@ -81,6 +92,39 @@ class ClaimSubmissionServiceTest {
     assertThatThrownBy(() -> service.submit(command))
         .isInstanceOf(PolicyServiceUnavailableException.class);
     verify(claimCreationService, never()).create(command);
+    assertThat(submissionCount("auto", "error")).isEqualTo(1);
+    assertThat(policyValidationCount("error")).isEqualTo(1);
+  }
+
+  @Test
+  void recordsDuplicateSubmissionsSeparatelyFromTechnicalErrors() {
+    SubmitClaimCommand command = command("EXT-1001");
+    when(policyValidationPort.validate(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new PolicyValidationResult(true, "VALID", "Policy covers this claim"));
+    when(claimCreationService.create(command))
+        .thenThrow(new DuplicateClaimExternalReferenceException(command.externalReference()));
+
+    assertThatThrownBy(() -> service.submit(command))
+        .isInstanceOf(DuplicateClaimExternalReferenceException.class);
+
+    assertThat(submissionCount("auto", "duplicate")).isEqualTo(1);
+    assertThat(policyValidationCount("accepted")).isEqualTo(1);
+  }
+
+  private double submissionCount(String claimType, String outcome) {
+    return meterRegistry
+        .get("insurance.claims.submissions")
+        .tags("claim_type", claimType, "outcome", outcome)
+        .counter()
+        .count();
+  }
+
+  private long policyValidationCount(String outcome) {
+    return meterRegistry
+        .get("insurance.claims.policy.validation")
+        .tag("outcome", outcome)
+        .timer()
+        .count();
   }
 
   private SubmitClaimCommand command(String externalReference) {

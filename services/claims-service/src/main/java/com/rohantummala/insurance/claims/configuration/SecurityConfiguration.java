@@ -40,6 +40,8 @@ public class SecurityConfiguration {
                         "/swagger-ui/**",
                         "/error")
                     .permitAll()
+                    .requestMatchers("/actuator/prometheus")
+                    .hasRole("ADMIN")
                     .requestMatchers(HttpMethod.POST, "/api/v1/claims")
                     .hasAnyRole("AGENT", "ADMIN")
                     .requestMatchers(HttpMethod.PATCH, "/api/v1/claims/*/status")

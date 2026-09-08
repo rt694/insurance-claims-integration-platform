@@ -11,6 +11,8 @@ import com.rohantummala.insurance.claims.application.exception.InvalidClaimSumma
 import com.rohantummala.insurance.claims.application.service.ClaimSummaryService;
 import com.rohantummala.insurance.claims.application.service.SummaryProcessingResult;
 import com.rohantummala.insurance.claims.configuration.SummaryConsumerProperties;
+import com.rohantummala.insurance.claims.observability.ClaimsMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
@@ -22,12 +24,14 @@ class ClaimSummaryResultListenerTest {
   private final ClaimSummaryService summaryService = mock(ClaimSummaryService.class);
   private final SummaryFailureRouter failureRouter = mock(SummaryFailureRouter.class);
   private final Channel channel = mock(Channel.class);
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ClaimSummaryResultListener listener =
       new ClaimSummaryResultListener(
           decoder,
           summaryService,
           failureRouter,
-          new SummaryConsumerProperties(true, 3, Duration.ofSeconds(5), Duration.ofSeconds(5)));
+          new SummaryConsumerProperties(true, 3, Duration.ofSeconds(5), Duration.ofSeconds(5)),
+          new ClaimsMetrics(meterRegistry));
 
   @Test
   void acknowledgesOnlyAfterTheSummaryServiceSucceeds() throws Exception {
@@ -42,6 +46,7 @@ class ClaimSummaryResultListenerTest {
     var inOrder = org.mockito.Mockito.inOrder(summaryService, channel);
     inOrder.verify(summaryService).record(event);
     inOrder.verify(channel).basicAck(11L, false);
+    org.assertj.core.api.Assertions.assertThat(summaryCount("duplicate")).isEqualTo(1);
   }
 
   @Test
@@ -57,6 +62,7 @@ class ClaimSummaryResultListenerTest {
         .verify(failureRouter)
         .routeToDeadLetter(message, InvalidClaimSummaryEventException.class.getSimpleName());
     inOrder.verify(channel).basicAck(12L, false);
+    org.assertj.core.api.Assertions.assertThat(summaryCount("dead_lettered")).isEqualTo(1);
   }
 
   @Test
@@ -74,6 +80,7 @@ class ClaimSummaryResultListenerTest {
         .verify(failureRouter)
         .routeForRetry(message, 1, IllegalStateException.class.getSimpleName());
     inOrder.verify(channel).basicAck(13L, false);
+    org.assertj.core.api.Assertions.assertThat(summaryCount("retried")).isEqualTo(1);
   }
 
   @Test
@@ -106,6 +113,7 @@ class ClaimSummaryResultListenerTest {
     listener.consume(message, channel);
 
     verify(channel).basicNack(15L, false, true);
+    org.assertj.core.api.Assertions.assertThat(summaryCount("requeued")).isEqualTo(1);
   }
 
   private Message message(long deliveryTag) {
@@ -113,5 +121,13 @@ class ClaimSummaryResultListenerTest {
     properties.setDeliveryTag(deliveryTag);
     properties.setMessageId("message-" + deliveryTag);
     return new Message("{}".getBytes(), properties);
+  }
+
+  private double summaryCount(String outcome) {
+    return meterRegistry
+        .get("insurance.claims.summary.results")
+        .tag("outcome", outcome)
+        .counter()
+        .count();
   }
 }

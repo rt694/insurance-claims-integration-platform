@@ -2,9 +2,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Protocol, TypedDict
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from claim_summary_worker.config import WorkerSettings, get_settings
+from claim_summary_worker.metrics import WorkerMetrics
 from claim_summary_worker.safety import SYSTEM_PROMPT
 
 
@@ -25,8 +27,10 @@ class WorkerRuntimeLifecycle(Protocol):
 def create_app(
     settings: WorkerSettings | None = None,
     runtime: WorkerRuntimeLifecycle | None = None,
+    metrics: WorkerMetrics | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
+    resolved_metrics = metrics or WorkerMetrics()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -51,6 +55,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.policy_ready = False
     app.state.runtime = runtime
+    app.state.metrics = resolved_metrics
 
     @app.get("/health/live", tags=["health"])
     async def liveness(request: Request) -> HealthResponse:
@@ -58,15 +63,26 @@ def create_app(
         return {"status": "UP", "service": worker_settings.service_name}
 
     @app.get("/health/ready", tags=["health"])
-    async def readiness(request: Request) -> HealthResponse:
+    async def readiness(request: Request, response: Response) -> HealthResponse:
         worker_settings: WorkerSettings = request.app.state.settings
         configured_runtime: WorkerRuntimeLifecycle | None = request.app.state.runtime
         broker_ready = not worker_settings.rabbitmq_enabled or (
             configured_runtime is not None and configured_runtime.is_ready
         )
+        ready = request.app.state.policy_ready and broker_ready
+        if not ready:
+            response.status_code = 503
         return {
-            "status": "UP" if request.app.state.policy_ready and broker_ready else "DOWN",
+            "status": "UP" if ready else "DOWN",
             "service": worker_settings.service_name,
         }
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint(request: Request) -> Response:
+        worker_metrics: WorkerMetrics = request.app.state.metrics
+        return Response(
+            content=generate_latest(worker_metrics.registry),
+            headers={"Content-Type": CONTENT_TYPE_LATEST},
+        )
 
     return app

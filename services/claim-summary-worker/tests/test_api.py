@@ -5,6 +5,7 @@ from pydantic import SecretStr
 
 from claim_summary_worker.api import create_app
 from claim_summary_worker.config import WorkerSettings
+from claim_summary_worker.metrics import WorkerMetrics
 
 
 class FakeConsumer:
@@ -41,6 +42,19 @@ def test_openapi_describes_both_operational_endpoints(client: TestClient) -> Non
     assert "/health/ready" in paths
 
 
+def test_prometheus_endpoint_exports_worker_metrics() -> None:
+    metrics = WorkerMetrics()
+    metrics.record_processing("success", 0.25)
+
+    with TestClient(create_app(WorkerSettings(), metrics=metrics)) as metrics_client:
+        response = metrics_client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert 'insurance_worker_claim_summaries_total{outcome="success"} 1.0' in response.text
+    assert "insurance_worker_claim_summary_duration_seconds_count 1.0" in response.text
+
+
 def test_readiness_tracks_an_enabled_broker_consumer() -> None:
     consumer = FakeConsumer(ready=True)
     settings = WorkerSettings(rabbitmq_enabled=True, rabbitmq_password=SecretStr(token_urlsafe()))
@@ -57,14 +71,18 @@ def test_readiness_is_down_when_enabled_consumer_is_not_connected() -> None:
     settings = WorkerSettings(rabbitmq_enabled=True, rabbitmq_password=SecretStr(token_urlsafe()))
 
     with TestClient(create_app(settings, consumer)) as broker_client:
-        assert broker_client.get("/health/ready").json()["status"] == "DOWN"
+        response = broker_client.get("/health/ready")
+        assert response.status_code == 503
+        assert response.json()["status"] == "DOWN"
 
 
 def test_readiness_is_down_when_enabled_consumer_is_not_wired() -> None:
     settings = WorkerSettings(rabbitmq_enabled=True, rabbitmq_password=SecretStr(token_urlsafe()))
 
     with TestClient(create_app(settings)) as broker_client:
-        assert broker_client.get("/health/ready").json()["status"] == "DOWN"
+        response = broker_client.get("/health/ready")
+        assert response.status_code == 503
+        assert response.json()["status"] == "DOWN"
 
 
 def test_disabled_consumer_is_not_started_or_closed() -> None:

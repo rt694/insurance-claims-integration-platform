@@ -3,6 +3,7 @@ package com.rohantummala.insurance.claims.application.service;
 import com.rohantummala.insurance.claims.application.event.OutboxEventPublication;
 import com.rohantummala.insurance.claims.application.port.EventPublisher;
 import com.rohantummala.insurance.claims.application.port.OutboxPublicationRepository;
+import com.rohantummala.insurance.claims.observability.ClaimsMetrics;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,6 +21,7 @@ public class OutboxPublicationService {
   private final int batchSize;
   private final Duration leaseDuration;
   private final Duration retryDelay;
+  private final ClaimsMetrics metrics;
 
   public OutboxPublicationService(
       OutboxPublicationRepository repository,
@@ -27,13 +29,15 @@ public class OutboxPublicationService {
       Clock clock,
       int batchSize,
       Duration leaseDuration,
-      Duration retryDelay) {
+      Duration retryDelay,
+      ClaimsMetrics metrics) {
     this.repository = repository;
     this.eventPublisher = eventPublisher;
     this.clock = clock;
     this.batchSize = batchSize;
     this.leaseDuration = leaseDuration;
     this.retryDelay = retryDelay;
+    this.metrics = metrics;
   }
 
   public OutboxPublicationResult publishNextBatch() {
@@ -63,7 +67,9 @@ public class OutboxPublicationService {
       published++;
     }
 
-    return new OutboxPublicationResult(events.size(), published, failed);
+    OutboxPublicationResult result = new OutboxPublicationResult(events.size(), published, failed);
+    metrics.recordOutboxBatch(result);
+    return result;
   }
 
   private String failureReason(RuntimeException exception) {

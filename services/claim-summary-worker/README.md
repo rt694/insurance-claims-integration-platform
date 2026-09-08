@@ -33,7 +33,16 @@ Then inspect:
 
 - `http://localhost:8083/health/live`
 - `http://localhost:8083/health/ready`
+- `http://localhost:8083/metrics`
 - `http://localhost:8083/docs`
+
+The Prometheus endpoint reports aggregate success/error counts and a processing-time
+histogram. It deliberately does not use claim IDs, correlation IDs, descriptions, or
+provider error text as labels. Those values would create an unbounded number of time
+series and could expose data that does not belong in monitoring telemetry.
+The readiness endpoint returns HTTP `503` with `{"status":"DOWN"}` when an enabled
+broker runtime is not connected, allowing an orchestrator to stop routing work to an
+instance that cannot process it.
 
 ## RabbitMQ delivery safety
 
