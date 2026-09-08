@@ -249,7 +249,71 @@ the untrusted claim JSON, disables response storage, and maps unusable upstream 
 to the worker's existing retry path. See the worker README for both provider setup
 options and the complete local consume → summarize → publish flow.
 
-## Run and manually verify the platform services
+## Run the whole platform with Docker Compose
+
+The quickest way to run everything is through Docker Compose. Copy the environment
+template once, replace every password placeholder with a local-only value, and keep
+that `.env` file out of Git:
+
+```bash
+cp .env.example .env
+docker compose config --quiet
+docker compose up --build --detach --wait
+```
+
+The first build takes longer because Docker downloads the base images and Maven,
+Python, and frontend dependencies. Later builds reuse cached layers when those files
+have not changed. `--wait` returns only after every container reports healthy, so you
+do not have to guess how long each service needs to start.
+
+| Component | Local address |
+| --- | --- |
+| Claims portal | `http://localhost:5173` |
+| Claims API | `http://localhost:8080` |
+| Policy API | `http://localhost:8082` |
+| Worker health and metrics | `http://localhost:8083` |
+| Keycloak | `http://localhost:8090` |
+| RabbitMQ management | `http://localhost:15672` |
+| PostgreSQL | `localhost:5432` |
+
+Check container health at any time:
+
+```bash
+docker compose ps
+curl --fail --silent http://localhost:8080/actuator/health
+curl --fail --silent http://localhost:8083/health/ready
+```
+
+Open the portal and sign in with one of the synthetic users from `.env`. Submitting a
+claim with an agent or administrator account now exercises the whole path: Nginx
+proxies the browser request to the claims container, the claims service checks the
+policy service and stores the claim in PostgreSQL, the outbox publishes to RabbitMQ,
+and the worker generates and returns a mock summary. The mock provider is intentional,
+so this full local setup does not need an OpenAI API key.
+
+Each container runs the same application code as the direct-development commands,
+but internal calls use Compose names such as `postgres`, `rabbitmq`, `keycloak`, and
+`policy-service`. Your browser still uses `localhost`, since Docker service names are
+not available outside the Compose network.
+
+Follow logs for one service or the whole stack with:
+
+```bash
+docker compose logs --follow claims-service
+docker compose logs --follow
+```
+
+When you are done, stop and remove the containers:
+
+```bash
+docker compose down
+```
+
+This keeps the PostgreSQL and RabbitMQ named volumes, so your local data is still
+there next time. Only use `docker compose down --volumes` when you intentionally want
+to delete that local data and start over.
+
+## Run services directly for development
 
 Create your ignored local environment file and choose a local-only database
 password:

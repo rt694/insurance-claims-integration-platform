@@ -62,8 +62,129 @@ services:
           [[ "$$status" == *"200 OK"* ]]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 24
+      start_period: 120s
+    restart: unless-stopped
+
+  policy-service:
+    build:
+      context: .
+      dockerfile: services/policy-service/Dockerfile
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://localhost:8082/actuator/health/readiness
+      interval: 5s
+      timeout: 3s
+      retries: 12
       start_period: 15s
+    restart: unless-stopped
+
+  claims-service:
+    build:
+      context: services/claims-service
+    environment:
+      CLAIMS_DB_URL: jdbc:postgresql://postgres:5432/${CLAIMS_DB_NAME:-claims}
+      CLAIMS_DB_USERNAME: ${CLAIMS_DB_USERNAME:-claims_app}
+      CLAIMS_DB_PASSWORD: ${CLAIMS_DB_PASSWORD:?Set CLAIMS_DB_PASSWORD in a local .env file}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-claims_app}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in a local .env file}
+      POLICY_SERVICE_BASE_URL: http://policy-service:8082
+      CLAIMS_JWT_ISSUER_URI: ${CLAIMS_JWT_ISSUER_URI:-http://localhost:8090/realms/insurance-platform}
+      CLAIMS_JWT_JWK_SET_URI: http://keycloak:8080/realms/insurance-platform/protocol/openid-connect/certs
+      CLAIMS_JWT_AUDIENCE: ${CLAIMS_JWT_AUDIENCE:-claims-service}
+      CLAIMS_CORS_ALLOWED_ORIGINS: ${CLAIMS_CORS_ALLOWED_ORIGINS:-http://localhost:5173}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      policy-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://localhost:8080/actuator/health
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  claim-summary-worker:
+    build:
+      context: services/claim-summary-worker
+    environment:
+      CLAIM_SUMMARY_WORKER_ENVIRONMENT: local-compose
+      CLAIM_SUMMARY_WORKER_RABBITMQ_ENABLED: "true"
+      CLAIM_SUMMARY_WORKER_RABBITMQ_HOST: rabbitmq
+      CLAIM_SUMMARY_WORKER_RABBITMQ_PORT: 5672
+      CLAIM_SUMMARY_WORKER_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-claims_app}
+      CLAIM_SUMMARY_WORKER_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in a local .env file}
+      CLAIM_SUMMARY_WORKER_SUMMARY_PROVIDER: mock
+    ports:
+      - "8083:8083"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      claims-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:8083/health/ready', timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  claims-portal:
+    build:
+      context: services/claims-portal
+      args:
+        VITE_OIDC_AUTHORITY: ${VITE_OIDC_AUTHORITY:-http://localhost:8090/realms/insurance-platform}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-claims-portal}
+    ports:
+      - "5173:8080"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      claims-service:
+        condition: service_healthy
+      claim-summary-worker:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --spider
+        - http://127.0.0.1:8080/health
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
 
 volumes:
