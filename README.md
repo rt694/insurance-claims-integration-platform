@@ -351,6 +351,42 @@ This keeps the PostgreSQL and RabbitMQ named volumes, so your local data is stil
 there next time. Only use `docker compose down --volumes` when you intentionally want
 to delete that local data and start over.
 
+### Keep dependency ports private
+
+The normal Compose file publishes dependency ports for local debugging. If you only
+need the portal, claims API, and Keycloak from your browser or terminal, opt into the
+private-port configuration:
+
+```bash
+docker compose -f compose.yaml -f compose.private.yaml config --quiet
+docker compose -f compose.yaml -f compose.private.yaml up --build --detach --wait
+```
+
+This removes host port mappings for PostgreSQL, RabbitMQ (including its management
+UI), the policy service, and the worker. Containers still reach each other by their
+Compose service names. It does not add application authentication to those internal
+services or isolate containers from one another. The portal (`5173`), claims API
+(`8080`), and Keycloak (`8090`) remain published exactly as in the normal setup.
+
+The override uses Compose's `!reset` tag because an ordinary empty `ports` list does
+not clear inherited mappings. Use a current Docker Compose version that supports
+that tag. See [Docker's merge rules](https://docs.docker.com/reference/compose-file/merge/).
+
+Use the same two `-f` options for `ps`, `logs`, and `down`. To inspect the database
+without publishing its port, run:
+
+```bash
+docker compose -f compose.yaml -f compose.private.yaml exec postgres psql -U claims_app -d claims
+```
+
+Adjust the username/database if you changed them. To return to the normal local
+setup, stop this configuration without removing
+volumes and run the usual `docker compose up --build --detach --wait` command.
+
+This is a smaller local network surface, not a production deployment. It still uses
+development Keycloak, plain HTTP, and locally configured secrets. Do not expose it to
+the public internet.
+
 ## Run services directly for development
 
 Create your ignored local environment file and choose a local-only database
@@ -683,22 +719,32 @@ type `urn:problem:claim-summary-not-found`.
 
 ### Controlled dead-letter replay
 
-Replay is off by default. First fix the reason messages failed and inspect the
+Replay is off by default and is restricted to `ADMIN` tokens when enabled. First fix
+the reason messages failed and inspect the
 dead-letter queue in RabbitMQ. For a local, temporary maintenance session, restart
 the claims service with both the replay feature and its Actuator web exposure enabled:
 
 ```bash
 export DEAD_LETTER_REPLAY_ENABLED=true
 export MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,deadLetterReplay
+cd services/claims-service
 ./mvnw spring-boot:run
 ```
 
-Replay a bounded batch (between 1 and 100 messages):
+The commands above are for a directly run claims service, with the normal environment
+variables already loaded from the repository root. They do not change an existing
+Compose container. Both the feature flag and Actuator web exposure are needed; the
+security rule alone does not enable the endpoint.
+
+Sign in as the synthetic platform administrator (`claims-admin` by default, not the
+Keycloak console's `admin` account), and use its current access token as
+`CLAIMS_ACCESS_TOKEN`. Replay a bounded batch (between 1 and 100 messages):
 
 ```bash
 curl --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $CLAIMS_ACCESS_TOKEN" \
   --data '{"limit":10}' \
   http://localhost:8080/actuator/deadLetterReplay
 ```
@@ -706,9 +752,12 @@ curl --fail --silent --show-error \
 Each dead-letter message is acknowledged only after its publication back to
 `claims.events` is broker-confirmed. Replay removes the old retry/failure headers and
 adds a `replayedAt` timestamp. Disable the flag and remove the endpoint from exposure
-after maintenance. This local learning setup does not yet have endpoint authentication;
-production deployment must protect administrative Actuator operations with strong
-authentication and authorization.
+after maintenance, then restart the service. Missing credentials return `401`; agent,
+reviewer, or other non-administrator tokens return `403`. Only the POST operation is
+allowed. The endpoint handles summary-result dead letters, not worker-request dead
+letters. Broker confirmation and manual acknowledgements still protect replayed
+messages; administrator authorization is an additional boundary, not a replacement.
+Never put the token in a file or commit, and unset it when finished.
 
 ## Retrieve and browse claims
 

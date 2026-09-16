@@ -57,6 +57,17 @@ class ClaimSecurityApiTest {
   }
 
   @Test
+  void keepsDeadLetterReplayUnavailableByDefaultEvenForAdministrators() throws Exception {
+    mockMvc
+        .perform(
+            post("/actuator/deadLetterReplay")
+                .with(role("ADMIN"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"limit\":10}"))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
   void allowsOnlyTheConfiguredPortalOrigin() throws Exception {
     mockMvc
         .perform(

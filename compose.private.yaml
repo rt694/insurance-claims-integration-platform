@@ -1,0 +1,12 @@
+# Opt in with: docker compose -f compose.yaml -f compose.private.yaml up --build --detach --wait
+# Remove host access to dependencies; service-to-service Docker networking is unchanged.
+# This is not a production deployment: Keycloak still runs in development mode without TLS.
+services:
+  postgres:
+    ports: !reset []
+  rabbitmq:
+    ports: !reset []
+  policy-service:
+    ports: !reset []
+  claim-summary-worker:
+    ports: !reset []

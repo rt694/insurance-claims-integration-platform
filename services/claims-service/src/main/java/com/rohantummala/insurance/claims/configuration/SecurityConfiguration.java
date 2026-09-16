@@ -42,6 +42,8 @@ public class SecurityConfiguration {
                     .permitAll()
                     .requestMatchers("/actuator/prometheus")
                     .hasRole("ADMIN")
+                    .requestMatchers(HttpMethod.POST, "/actuator/deadLetterReplay")
+                    .hasRole("ADMIN")
                     .requestMatchers(HttpMethod.POST, "/api/v1/claims")
                     .hasAnyRole("AGENT", "ADMIN")
                     .requestMatchers(HttpMethod.PATCH, "/api/v1/claims/*/status")

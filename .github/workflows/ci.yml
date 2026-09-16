@@ -120,5 +120,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate the Compose file
         run: docker compose config --quiet
+      - name: Validate the private dependency-port configuration
+        run: docker compose -f compose.yaml -f compose.private.yaml config --quiet
       - name: Build the application images
         run: docker compose build
